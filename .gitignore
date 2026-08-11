@@ -1,0 +1,8 @@
+.env
+__pycache__/
+*.pyc
+.venv/
+jobs/
+output/
+*.mp4
+!app/tests/golden_clip.wav
