@@ -1,0 +1,27 @@
+{
+  "id": "child_v1",
+  "base_body": "body.png",
+  "visemes": {
+    "A": "mouth_A.png",
+    "B": "mouth_B.png",
+    "C": "mouth_C.png",
+    "D": "mouth_D.png",
+    "E": "mouth_E.png",
+    "F": "mouth_F.png",
+    "G": "mouth_G.png",
+    "H": "mouth_H.png",
+    "X": "mouth_X.png"
+  },
+  "eyes": {
+    "open": "eyes_open.png",
+    "closed": "eyes_closed.png"
+  },
+  "anchor_point": {
+    "x": 148,
+    "y": 168
+  },
+  "eye_anchor": {
+    "x": 148,
+    "y": 126
+  }
+}
