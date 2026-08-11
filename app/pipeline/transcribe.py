@@ -35,7 +35,7 @@ def transcribe(
     min_speakers: int | None = None,
     max_speakers: int | None = None,
     language: str | None = None,
-    diarize_model: str = "pyannote/speaker-diarization-3.1",
+    diarize_model: str = "pyannote/speaker-diarization-community-1",
 ) -> dict:
     import whisperx
 
@@ -111,7 +111,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-speakers", type=int, default=None)
     parser.add_argument("--max-speakers", type=int, default=None)
     parser.add_argument("--language", default=None, help="force language code, e.g. en")
-    parser.add_argument("--diarize-model", default="pyannote/speaker-diarization-3.1",
+    parser.add_argument("--diarize-model", default="pyannote/speaker-diarization-community-1",
                         help="pyannote diarization model (must be license-accepted)")
     args = parser.parse_args(argv)
 
