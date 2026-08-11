@@ -1,0 +1,18 @@
+# AI Animation Pipeline — Python dependencies (Windows native, conda env aipipeline)
+# torch pinned to the CPU build installed from the PyTorch CPU index
+torch==2.8.0
+torchaudio==2.8.0
+torchvision==0.23.0
+whisperx==3.8.6
+faster-whisper==1.2.1
+pyannote-audio==4.0.7
+ctranslate2==4.8.1
+moviepy==2.2.1
+imageio-ffmpeg==0.6.0
+openai==2.53.0
+pydantic==2.13.4
+python-dotenv==1.2.2
+numpy==2.4.6
+pillow==11.3.0
+requests==2.34.2
+pytest==9.1.1
