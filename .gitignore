@@ -5,4 +5,5 @@ __pycache__/
 jobs/
 output/
 *.mp4
+tools/blender/
 !app/tests/golden_clip.wav

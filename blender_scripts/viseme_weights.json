@@ -1,0 +1,11 @@
+{
+  "x": {},
+  "a": {"jawOpen": 1.0, "mouthOpen": 0.4, "v__M_AA___": 1.0},
+  "b": {"mouthPress": 0.8, "mouthClose": 0.9, "v__M_BMP___": 1.0},
+  "c": {"jawOpen": 0.35, "mouthStretch": 0.7, "v__M_IH___": 1.0},
+  "d": {"jawOpen": 0.8, "mouthOpen": 0.4, "mouthSmile": 0.3, "v__M_II___": 1.0},
+  "e": {"jawOpen": 0.75, "mouthStretch": 0.55, "v__M_EE___": 1.0},
+  "f": {"jawOpen": 0.6, "mouthFunnel": 0.75, "mouthPucker": 0.3, "v__M_FF___": 1.0},
+  "g": {"jawOpen": 0.7, "mouthPucker": 0.6, "tongueOut": 1.0, "v__M_TH___": 1.0},
+  "h": {"mouthFunnel": 0.8, "mouthPucker": 0.7, "v__M_OO___": 1.0}
+}
