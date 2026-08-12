@@ -143,6 +143,21 @@ def test_build_timelines_uses_segment_text_and_source(monkeypatch, tmp_path):
     assert len(calls["cuts"]) == 3
 
 
+def test_build_timelines_honors_remap(monkeypatch, tmp_path):
+    work = _stub_segment_events(monkeypatch, tmp_path)
+    timelines = build_viseme_timelines(
+        TRANSCRIPT, tmp_path / "src.wav", work,
+        rhubarb_exe=tmp_path / "rhubarb.exe", ffmpeg_exe=tmp_path / "ffmpeg.exe",
+        remap={"seg_2": "SPEAKER_01"},
+    )
+    assert "SPEAKER_02" not in timelines
+    assert timelines["SPEAKER_01"] == [
+        VisemeEvent(start=1.63 + 0.25, end=1.63 + 0.75, shape="A"),
+        VisemeEvent(start=4.77 + 0.25, end=4.77 + 0.75, shape="A"),
+        VisemeEvent(start=6.95 + 0.25, end=6.95 + 0.75, shape="A"),
+    ]
+
+
 def test_json_roundtrip():
     from app.pipeline.lipsync import viseme_timelines_to_json
 

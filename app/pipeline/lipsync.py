@@ -119,12 +119,18 @@ def build_viseme_timelines(
     work_dir: Path,
     rhubarb_exe: Path,
     ffmpeg_exe: Path,
+    remap: dict[str, str] | None = None,
 ) -> dict[str, list[VisemeEvent]]:
-    """Run Rhubarb per segment and return {speaker: merged global timeline}."""
+    """Run Rhubarb per segment and return {speaker: merged global timeline}.
+
+    `remap` overrides segment speakers ({'seg_3': 'SPEAKER_02'}) — the diarized
+    speaker is corrected before files are organized per character.
+    """
+    remap = remap or {}
     work_dir.mkdir(parents=True, exist_ok=True)
     per_speaker: dict[str, list[VisemeEvent]] = {}
     for i, seg in enumerate(transcript["segments"]):
-        speaker = seg["speaker"]
+        speaker = remap.get(f"seg_{i}", seg["speaker"])
         seg_wav = work_dir / f"seg_{i}.wav"
         cut_audio(ffmpeg_exe, source_wav, seg["start"], seg["end"], seg_wav)
         events = run_rhubarb(rhubarb_exe, seg_wav, seg["text"], work_dir / f"seg_{i}.xml")
@@ -145,6 +151,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("transcript", help="input transcript.json")
     parser.add_argument("-o", "--output", default=str(DEFAULT_VISEMES_OUT), help="output visemes.json path")
     parser.add_argument("--audio", default=str(ROOT / "media" / "golden_clip.wav"), help="source audio wav")
+    parser.add_argument("--remap-file", default=None, help="JSON file with {seg_N: SPEAKER_XX}")
     parser.add_argument("--work-dir", default=str(ROOT / "jobs" / "golden" / "lipsync_work"), help="scratch dir")
     args = parser.parse_args(argv)
 
@@ -153,6 +160,10 @@ def main(argv: list[str] | None = None) -> int:
         transcript = json.loads(Path(args.transcript).read_text(encoding="utf-8"))
         if not transcript.get("segments"):
             raise ValueError(f"transcript {args.transcript} has no segments")
+        remap = {}
+        if args.remap_file and Path(args.remap_file).exists():
+            remap = json.loads(Path(args.remap_file).read_text(encoding="utf-8-sig"))
+            print(f"[lipsync] applying speaker remap: {remap}")
         print(f"[lipsync] {len(transcript['segments'])} segment(s) -> rhubarb")
         timelines = build_viseme_timelines(
             transcript,
@@ -160,6 +171,7 @@ def main(argv: list[str] | None = None) -> int:
             Path(args.work_dir),
             TOOLS_RHUBARB / "rhubarb.exe",
             TOOLS_FFMPEG / "ffmpeg.exe",
+            remap=remap,
         )
         out = Path(args.output)
         out.parent.mkdir(parents=True, exist_ok=True)
