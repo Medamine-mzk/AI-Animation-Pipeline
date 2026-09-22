@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Animation Pipeline — Landing</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>
+*{font-family:'Inter',sans-serif}
+h1,h2{font-family:'Space Grotesk',sans-serif}
+.glass{background:rgba(255,255,255,0.08);backdrop-filter:blur(16px) saturate(180%);border:1px solid rgba(255,255,255,0.15)}
+.bento{transition:all 0.3s cubic-bezier(0.34,1.56,0.64,1)}
+.bento:hover{transform:translateY(-4px) scale(1.02);box-shadow:0 20px 40px rgba(0,0,0,0.3)}
+</style>
+</head>
+<body class="bg-[#0a0a0f] text-white min-h-screen">
+<div class="absolute inset-0 bg-gradient-to-br from-violet-900/30 via-transparent to-cyan-900/20 pointer-events-none"></div>
+<header class="relative z-10 flex justify-between items-center p-6 max-w-6xl mx-auto">
+<div class="text-xl font-bold tracking-tight">AI<span class="text-violet-400">Animation</span> Pipeline</div>
+<div class="text-sm text-white/60">Single Horsleygate Hall 4K • FOV42 • Hybrid</div>
+</header>
+<main class="relative z-10 max-w-6xl mx-auto px-6 py-12">
+<div class="text-center mb-12">
+<h1 class="text-5xl md:text-6xl font-bold leading-tight">Audio <span class="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-cyan-400">→ Living</span> Cartoon</h1>
+<p class="text-white/60 mt-4 text-lg">Choose how to create your 3D dialogue video — wav, manual, or AI</p>
+</div>
+<div class="grid md:grid-cols-3 gap-6">
+<!-- WAV -->
+<a href="config.html?mode=wav" class="bento glass rounded-2xl p-6 cursor-pointer group">
+<div class="w-12 h-12 rounded-xl bg-gradient-to-br from-violet-500 to-fuchsia-500 flex items-center justify-center text-xl">🎙️</div>
+<h3 class="mt-4 text-lg font-semibold">WAV / MP3</h3>
+<p class="text-sm text-white/60 mt-2">Upload audio → WhisperX diarization → visemes → dialogue</p>
+<div class="mt-4 text-xs text-violet-300">Drop .wav/.mp3 → transcribe</div>
+</a>
+<!-- Manual -->
+<a href="config.html?mode=manual" class="bento glass rounded-2xl p-6 cursor-pointer group">
+<div class="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 to-teal-500 flex items-center justify-center text-xl">✍️</div>
+<h3 class="mt-4 text-lg font-semibold">Manual Dialogue</h3>
+<p class="text-sm text-white/60 mt-2">Write speakers & lines, set emotions, times, preview</p>
+<div class="mt-4 text-xs text-cyan-300">Speakers + lines + emotions</div>
+</a>
+<!-- AI -->
+<a href="config.html?mode=ai" class="bento glass rounded-2xl p-6 cursor-pointer group">
+<div class="w-12 h-12 rounded-xl bg-gradient-to-br from-amber-500 to-orange-500 flex items-center justify-center text-xl">🤖</div>
+<h3 class="mt-4 text-lg font-semibold">AI Generate</h3>
+<p class="text-sm text-white/60 mt-2">Prompt → LLM SceneScript → emotions → dialogue</p>
+<div class="mt-4 text-xs text-amber-300">Prompt → 4-person family</div>
+</a>
+</div>
+<div class="mt-8 glass rounded-2xl p-4 flex justify-between items-center text-sm">
+<span class="text-white/60">Current: Horsleygate Hall 4K Fitted • Green 10m • Very small 0.3 • Hybrid eye-level</span>
+<a href="dialogue-player.html" class="px-4 py-2 bg-white text-black rounded-lg font-semibold">→ Player (Page 3)</a>
+</div>
+</main>
+</body>
+</html>

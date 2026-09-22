@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Animation Settings — AI Animation</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>*{font-family:'Inter',sans-serif} h2{font-family:'Space Grotesk',sans-serif} .glass{background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.12)}</style>
+<script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+<script type="importmap">{"imports":{"three":"./assets/three.module.js","three/addons/":"https://unpkg.com/three@0.160.0/examples/jsm/","talkinghead":"./assets/talkinghead.mjs"}}</script>
+</head>
+<body class="bg-[#0a0a0f] text-white min-h-screen">
+<header class="flex justify-between items-center p-4 max-w-6xl mx-auto text-sm">
+<a href="index.html" class="text-white/60">← Landing</a><span class="text-white/40">Animation Settings — global clip_catalog</span><div class="flex gap-2"><a href="config.html?mode=wav" class="px-3 py-1 bg-white/10 rounded-lg">→ Dialogue Config</a><a href="dialogue-player.html" class="px-3 py-1 bg-violet-600 rounded-lg">→ Player</a></div>
+</header>
+<div class="max-w-6xl mx-auto px-4 pb-12">
+<div class="glass rounded-xl p-4 mb-4">
+<div class="flex justify-between items-center">
+<h2 class="text-lg font-semibold">Emotion → Animation mapping (global)</h2>
+<div class="flex gap-2">
+<button id="reloadBtn" class="px-3 py-1.5 bg-white/10 rounded-lg text-sm">↻ Reload</button>
+<button id="saveBtn" class="px-4 py-1.5 bg-emerald-600 rounded-lg text-sm">💾 Save to clip_catalog.json</button>
+</div>
+</div>
+<p class="text-xs text-white/50 mt-1">Each GoEmotion (28) maps to one or more Mixamo FBX clips. First in list is default for that emotion. Preview with a test avatar. <code>neutral</code> is fallback for undetected emotions.</p>
+<div id="status" class="text-xs mt-2 h-4"></div>
+</div>
+
+<div class="grid lg:grid-cols-3 gap-6">
+<div class="lg:col-span-2 glass rounded-2xl p-4">
+<div id="grid" class="grid md:grid-cols-2 gap-3 max-h-[65vh] overflow-y-auto pr-1"></div>
+</div>
+<div class="glass rounded-2xl p-4">
+<h3 class="font-semibold mb-2">Preview</h3>
+<div id="previewContainer" class="w-full h-[320px] bg-black/30 rounded-xl overflow-hidden relative"></div>
+<div class="flex gap-2 mt-3">
+<label class="text-xs flex-1">Avatar <select id="previewAvatar" class="w-full mt-1 bg-black/30 rounded px-2 py-1 text-xs"><option value="woman1">woman1 (F)</option><option value="man1">man1 (M)</option><option value="woman2">woman2 (F)</option><option value="man2">man2 (M)</option></select></label>
+<label class="text-xs flex-1">Clip <select id="previewClip" class="w-full mt-1 bg-black/30 rounded px-2 py-1 text-xs"></select></label>
+</div>
+<button id="playPreview" class="w-full mt-3 py-2 bg-violet-600 rounded-lg font-semibold">▶ Preview selected clip</button>
+<button id="stopPreview" class="w-full mt-2 py-1.5 bg-white/10 rounded-lg text-sm">■ Stop</button>
+<div id="previewStatus" class="text-xs text-white/50 mt-2 h-4"></div>
+<p class="text-xs text-white/40 mt-3">Tip: Pick an emotion row → dropdown shows its clips. Select a clip → Preview. Save writes to <code>jobs/golden/clip_catalog.json</code> used by next <code>assemble_dialogue</code>.</p>
+</div>
+</div>
+</div>
+<script type="module">
+import * as THREE from 'three';
+import { TalkingHead } from 'talkinghead';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const GO_EMOTIONS = ['admiration','amusement','anger','annoyance','approval','caring','confusion','curiosity','desire','disappointment','disapproval','disgust','embarrassment','excitement','fear','gratitude','grief','joy','love','nervousness','optimism','pride','realization','relief','remorse','sadness','surprise','neutral'];
+let catalog = {go_emotions:{}, clips_dir:"media/3d/mixamo/clips"};
+let available = [];
+let avatarCache = {};
+
+async function loadCatalog(){
+  const r = await fetch('/api/clips');
+  const j = await r.json();
+  catalog = j.catalog || j;
+  available = j.available || [];
+  if (!available.length) {
+    const r2 = await fetch('/api/clips/list');
+    available = await r2.json();
+  }
+  // ensure all 28 present
+  for(const e of GO_EMOTIONS){ if(!catalog.go_emotions[e]) catalog.go_emotions[e]=[]; }
+  renderGrid();
+  populatePreviewClip();
+  document.getElementById('status').textContent = `Loaded ${Object.keys(catalog.go_emotions).length} emotions, ${available.length} clips`;
+}
+function renderGrid(){
+  const grid=document.getElementById('grid');
+  grid.innerHTML='';
+  for(const emo of GO_EMOTIONS){
+    const clips = catalog.go_emotions[emo] || [];
+    const primary = clips[0] || '';
+    const row=document.createElement('div');
+    row.className='glass rounded-xl p-3 flex flex-col gap-2';
+    row.innerHTML=`
+      <div class="flex justify-between items-center">
+        <span class="font-semibold text-sm ${emo==='neutral'?'text-amber-300':''}">${emo} ${emo==='neutral'?'(fallback)':''}</span>
+        <span class="text-xs text-white/40">${clips.length} clips</span>
+      </div>
+      <select data-emo="${emo}" class="clipSelect w-full bg-black/30 rounded px-2 py-1.5 text-xs">
+        <option value="">— none —</option>
+        ${available.map(f=>`<option value="${f}" ${f===primary?'selected':''}>${f}</option>`).join('')}
+      </select>
+      <div class="flex gap-1">
+        <input data-emo="${emo}" class="clipList flex-1 bg-black/20 rounded px-2 py-1 text-xs" value="${clips.join(', ')}" placeholder="comma separated clips, first is default">
+        <button data-emo="${emo}" class="previewEmoBtn px-2 py-1 bg-violet-600/60 rounded text-xs">▶</button>
+      </div>
+      <div class="text-xs text-white/30">Add more clips comma-separated, first is default. Preview loads first.</div>
+    `;
+    grid.appendChild(row);
+  }
+  // listeners
+  grid.querySelectorAll('.clipSelect').forEach(sel=>{
+    sel.onchange = (e)=>{
+      const emo=e.target.dataset.emo;
+      const v=e.target.value;
+      const inp=grid.querySelector(`input[data-emo="${emo}"]`);
+      let list = inp.value.split(',').map(s=>s.trim()).filter(Boolean);
+      if(v && !list.includes(v)) list.unshift(v);
+      else if(v) { list = list.filter(x=>x!==v); list.unshift(v); }
+      inp.value = list.join(', ');
+    };
+  });
+  grid.querySelectorAll('.previewEmoBtn').forEach(btn=>{
+    btn.onclick = (e)=>{
+      const emo=e.target.dataset.emo;
+      const inp=grid.querySelector(`input[data-emo="${emo}"]`);
+      const first = inp.value.split(',').map(s=>s.trim()).filter(Boolean)[0];
+      if(first){ document.getElementById('previewClip').value=first; playPreview(first); }
+    };
+  });
+}
+
+function populatePreviewClip(){
+  const sel=document.getElementById('previewClip');
+  sel.innerHTML = available.map(f=>`<option value="${f}">${f}</option>`).join('');
+}
+
+// preview - plain three.js (default) vs legacy TalkingHead (?legacy=1)
+const isLegacyPreview = new URLSearchParams(location.search).get('legacy')==='1';
+let previewHead=null, previewMixer=null, previewContainer=document.getElementById('previewContainer');
+// plain three.js state
+let pScene=null, pCamera=null, pRenderer=null, pMixer=null, pActiveAction=null, pCurrentAvatar=null;
+function initPreviewScene(){
+  if(pRenderer) return;
+  const w=previewContainer.clientWidth, h=320;
+  pScene=new THREE.Scene(); pScene.background=new THREE.Color(0x1a1a2e);
+  pCamera=new THREE.PerspectiveCamera(40, w/h, 0.1, 100);
+  pCamera.position.set(0, 1.4, 2.6); pCamera.lookAt(0, 1.0, 0);
+  pScene.add(new THREE.HemisphereLight(0xffffff, 0x444444, 1.5));
+  const dir=new THREE.DirectionalLight(0xffffff, 1.2); dir.position.set(2,3,2); pScene.add(dir);
+  pRenderer=new THREE.WebGLRenderer({antialias:true});
+  pRenderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+  pRenderer.setSize(w,h);
+  pRenderer.outputColorSpace=THREE.SRGBColorSpace;
+  previewContainer.appendChild(pRenderer.domElement);
+  const clock=new THREE.Clock();
+  pRenderer.setAnimationLoop(()=>{ if(pMixer) pMixer.update(clock.getDelta()); pRenderer.render(pScene, pCamera); });
+}
+function captureBindPose(root){
+  root.traverse(o=>{ if(o.isBone){ o.userData.bindQ=o.quaternion.clone(); o.userData.bindP=o.position.clone(); }});
+}
+async function ensureAvatar(url){
+  console.log('[preview] ensureAvatar start', url);
+  if(pCurrentAvatar && pCurrentAvatar.userData.url===url) {
+    console.log('[preview] ensureAvatar reuse', url);
+    return pCurrentAvatar;
+  }
+  if(pCurrentAvatar) {
+    console.log('[preview] removing old avatar', pCurrentAvatar.userData.url);
+    pScene.remove(pCurrentAvatar);
+  }
+  try {
+    console.log('[preview] GLTFLoader.loadAsync', url);
+    const gltf=await new GLTFLoader().loadAsync(url);
+    console.log('[preview] gltf loaded', url, 'scene children', gltf.scene.children.length);
+    pCurrentAvatar=gltf.scene;
+    pCurrentAvatar.userData.url=url;
+    pScene.add(pCurrentAvatar);
+    captureBindPose(pCurrentAvatar);
+    pMixer=new THREE.AnimationMixer(pCurrentAvatar);
+    pActiveAction=null;
+    pCurrentAvatar.scale.setScalar(0.95);
+    pCurrentAvatar.position.set(0,0,0);
+    pCurrentAvatar.visible=true;
+    pCurrentAvatar.traverse(o=>{ if(o.isMesh) o.visible=true; });
+    pCurrentAvatar.updateMatrixWorld(true);
+    console.log('[preview] avatar ready', url, 'bones', (()=>{ let c=0; pCurrentAvatar.traverse(o=>{ if(o.isBone) c++; }); return c; })());
+    return pCurrentAvatar;
+  } catch(e){
+    console.error('[preview] ensureAvatar failed', url, e);
+    throw e;
+  }
+}
+async function ensurePreviewHead(){
+  if(isLegacyPreview){
+    console.log('[preview] legacy mode ?legacy=1 - using TalkingHead');
+    if(previewHead) return previewHead;
+    const container=previewContainer;
+    if(!container){ console.error('[preview] no container'); throw new Error('previewContainer not found'); }
+    container.innerHTML='';
+    const head = new TalkingHead(container, {cameraView:'full', cameraDistance:1.1, lipsyncLang:'en', avatarMood:'neutral'});
+    await head.start();
+    if(head.camera){ try{ head.camera.fov=38; head.camera.position.set(0,1.5,2.8); head.camera.lookAt(0,1,0); head.camera.updateProjectionMatrix(); }catch(e){} }
+    previewHead=head;
+    let lastT=performance.now();
+    const loop=(t)=>{ head._raf=requestAnimationFrame(loop); const dt=Math.min(0.05,(t-lastT)/1000); lastT=t; try{ head.controls?.update(); head.render(); }catch(e){} if(previewMixer) try{ previewMixer.update(dt); }catch(e){} };
+    loop(performance.now());
+    return head;
+  }
+  console.log('[preview] plain mode - ensure scene');
+  initPreviewScene();
+  if(previewHead) return previewHead;
+  // dummy head for compat
+  previewHead={ scene:pScene, camera:pCamera, renderer:pRenderer, armature:pCurrentAvatar, controls:{target:new THREE.Vector3(0,1,0), update:()=>{}}, render:()=>pRenderer.render(pScene,pCamera), isPlain:true };
+  return previewHead;
+}
+async function playPreview(clipName){
+  const status=document.getElementById('previewStatus');
+  status.textContent='Loading '+clipName+'...';
+  console.log('[preview] playPreview start', clipName, 'legacy', isLegacyPreview);
+  try{
+    const avatarSel=document.getElementById('previewAvatar').value;
+    const urlMap={woman1:'assets/woman1.glb', man1:'assets/man1.glb', woman2:'assets/woman.glb', man2:'assets/man.glb'};
+    const url=urlMap[avatarSel]||urlMap.woman1;
+    let avatar=null;
+    if(isLegacyPreview){
+      const head=await ensurePreviewHead();
+      console.log('[preview] legacy head ready', !!head, 'armature', !!head.armature, 'camera', !!head.camera);
+      console.log('[preview] loading avatar', avatarSel, url);
+      if(!head.armature || head._lastAvatar!==url){
+        console.log('[preview] showAvatar', url);
+        await head.showAvatar({url, body: avatarSel.startsWith('woman')?'F':'M', lipsyncLang:'en'});
+        head._lastAvatar=url;
+        await new Promise(r=> setTimeout(r, 100));
+        try {
+          if(head.armature){
+            head.armature.scale.setScalar(1.0);
+            head.armature.position.set(0, 0, 0);
+            head.armature.visible=true;
+            head.armature.traverse(o=>{ if(o.isMesh) o.visible=true; });
+            head.armature.updateMatrixWorld(true);
+            console.log('[preview] avatar scale 1.0 pos 0,0,0 armature', head.armature.name, 'bones', (()=>{ let c=0; head.armature.traverse(o=>{ if(o.isBone) c++; }); return c; })(), 'visible', head.armature.visible);
+          }
+        } catch(e){ console.warn('[preview] scale/pos set failed', e); }
+        try{
+          const dict=head.armature ? (()=>{ const m=new Set(); head.armature.traverse(o=>{ if(o.isMesh&&o.morphTargetDictionary) Object.keys(o.morphTargetDictionary).forEach(k=>m.add(k)); }); return m; })() : new Set();
+          console.log('[preview] avatar morphs', dict.size, [...dict].slice(0,5));
+        }catch(e){}
+      } else {
+        console.log('[preview] reusing avatar', head._lastAvatar);
+        try{
+          if(head.armature){
+            head.armature.visible=true;
+            head.armature.traverse(o=>{ if(o.isMesh) o.visible=true; });
+            head.armature.scale.setScalar(1.0);
+            head.armature.updateMatrixWorld(true);
+          }
+        }catch(e){}
+      }
+      // legacy path continues below with head as avatar
+      var headForLegacy = head;
+      var avatarForLegacy = head.armature ? head : {armature: head.armature};
+      // fall through to shared clip loading but with legacy head
+      window._previewHeadForLegacy = headForLegacy;
+    } else {
+      // plain three.js path
+      await ensurePreviewHead();
+      console.log('[preview] plain ensureAvatar', url);
+      const av = await ensureAvatar(url);
+      console.log('[preview] plain avatar ready', av.name, 'bones', (()=>{ let c=0; av.traverse(o=>{ if(o.isBone) c++; }); return c; })());
+    }
+    let clip=null;
+    try {
+      const loader=new FBXLoader();
+      const obj=await loader.loadAsync(encodeURI('media/3d/mixamo/clips/'+clipName));
+      clip=obj.animations[0];
+      if(!clip){ status.textContent='No animation in '+clipName; return; }
+      console.log('[preview] clip loaded', clipName, 'tracks', clip.tracks.length, 'duration', clip.duration.toFixed(2));
+      // use correct avatar for plain vs legacy
+      const avatar = isLegacyPreview ? head : {armature: pCurrentAvatar};
+      let before=clip.tracks.length;
+      let filtered=clip;
+      try {
+        const boneSet=new Set(); const boneLower=new Map();
+        const arm = avatar.armature || pCurrentAvatar;
+        if(arm) arm.traverse(o=>{ if(o.isBone){ boneSet.add(o.name); boneLower.set(o.name.toLowerCase(), o.name); }});
+        console.log('[preview] avatar bones', boneSet.size, [...boneSet].slice(0,8));
+        filtered = clip.clone();
+        const kept=[];
+        let remapped=0;
+        for(const t of clip.tracks){
+          const dotIdx=t.name.indexOf('.');
+          const bonePart=dotIdx>=0 ? t.name.slice(0,dotIdx) : t.name;
+          const prop=dotIdx>=0 ? t.name.slice(dotIdx) : '';
+          let rawBone=bonePart.split(':').pop();
+          let stripped=rawBone.replace(/^mixamorig\d*:?/i,'').replace(/^mixamorig_/i,'').replace(/^mixamorig/i,'').replace(/^:/,'');
+          if(!stripped) continue;
+          let real=null;
+          if(boneSet.has(stripped)) real=stripped;
+          else if(boneLower.has(stripped.toLowerCase())) real=boneLower.get(stripped.toLowerCase());
+          else {
+            // try case-insensitive
+            for(const b of boneSet){ if(b.toLowerCase()===stripped.toLowerCase()){ real=b; break; } }
+          }
+          if(!real) continue;
+          if(real==='Hips' && prop.includes('.position')) continue; // drop Hips position like main player
+          const newName=real+prop;
+          if(newName!==t.name) remapped++;
+          const nt=t.clone(); nt.name=newName; kept.push(nt);
+        }
+        console.log(`[preview] sanitized ${before} -> ${kept.length} tracks for ${avatarSel} remapped ${remapped}`);
+        if(kept.length>0) filtered.tracks=kept;
+        else console.warn('[preview] no tracks kept, keeping original to avoid black');
+      } catch(e){ console.warn('[preview] sanitize failed', e); filtered=clip; }
+      clip=filtered;
+      if(clip.tracks.length===0){
+        console.warn('[preview] all tracks filtered, keeping original');
+        clip=obj.animations[0].clone();
+      }
+    } catch(e){ status.textContent='Preview failed: '+e.message; console.error(e); return; }
+    // handle plain vs legacy - avoid duplicate let avatar
+    let mixerToUse;
+    let curAvatar = null;
+    if(isLegacyPreview){
+      curAvatar=head;
+      const avLegacy = head;
+      try {
+        mixerToUse = head.mixer || previewMixer || new THREE.AnimationMixer(avLegacy.armature);
+        if(head.mixer) mixerToUse = head.mixer;
+        try{ if(head.mixer) head.mixer.stopAllAction(); }catch(e){}
+        try{ if(previewMixer && previewMixer!==mixerToUse) previewMixer.stopAllAction(); }catch(e){}
+        if(avLegacy.armature){
+          avLegacy.armature.visible=true;
+          avLegacy.armature.traverse(o=>{ if(o.isMesh) o.visible=true; });
+          avLegacy.armature.traverse(o=>{
+            if(o.isBone){
+              if(o.userData && o.userData.bindQuaternion) o.quaternion.copy(o.userData.bindQuaternion);
+              else o.quaternion.set(0,0,0,1);
+              if(o.userData && o.userData.bindPosition) o.position.copy(o.userData.bindPosition);
+            }
+          });
+          avLegacy.armature.updateMatrixWorld(true);
+        }
+      } catch(e){ console.warn('[preview] legacy bind pose reset failed', e); }
+      previewMixer = mixerToUse;
+    } else {
+      // plain three.js
+      curAvatar = pCurrentAvatar;
+      if(!curAvatar){ status.textContent='No avatar loaded'; return; }
+      // stop previous
+      if(pMixer) try{ pMixer.stopAllAction(); }catch(e){}
+      if(pActiveAction) try{ pActiveAction.stop(); }catch(e){}
+      // reset to bind pose
+      try {
+        curAvatar.traverse(o=>{
+          if(o.isBone && o.userData.bindQ) o.quaternion.copy(o.userData.bindQ);
+          if(o.isBone && o.userData.bindP) o.position.copy(o.userData.bindP);
+        });
+        curAvatar.updateMatrixWorld(true);
+      } catch(e){}
+      mixerToUse = pMixer;
+      previewMixer = pMixer; // keep compat
+    }
+    await new Promise(r=> setTimeout(r, 60));
+    const act = (isLegacyPreview ? previewMixer : pMixer).clipAction(clip);
+    try{ (isLegacyPreview ? previewMixer : pMixer).stopAllAction(); }catch(e){}
+    act.reset().setEffectiveTimeScale(0.85).setEffectiveWeight(1).setLoop(THREE.LoopRepeat);
+    if(isLegacyPreview) act.fadeIn(0.25).play();
+    else act.play();
+    if(!isLegacyPreview) pActiveAction = act;
+    else previewMixer = mixerToUse;
+    // keep avatar visible during play - handle plain vs legacy - use curAvatar for legacy too
+    try {
+      if(isLegacyPreview){
+        const s=0.85;
+        const av = curAvatar || head;
+        if(av && av.armature){
+          av.armature.scale.setScalar(s);
+          av.armature.position.set(0, -0.02, 0);
+          av.armature.visible=true;
+          av.armature.traverse(o=>{ if(o.isMesh) o.visible=true; });
+          av.armature.updateMatrixWorld(true);
+        }
+        const cam = head.camera || pCamera;
+        const ctrl = head.controls;
+        if(cam){
+          cam.position.set(0, 1.35, 2.4);
+          cam.lookAt(0, 1.0, 0);
+          cam.fov=40;
+          cam.updateProjectionMatrix();
+        }
+        if(ctrl){
+          ctrl.target.set(0, 1.0, 0);
+          ctrl.minDistance=1.0;
+          ctrl.maxDistance=4.5;
+          ctrl.update();
+        }
+        const rend = head.renderer || pRenderer;
+        if(rend){
+          rend.setSize(previewContainer.clientWidth, 320);
+          rend.setClearColor(0x1a1a2e, 1);
+        }
+        try{ (head.render|| (()=>pRenderer.render(pScene,pCamera))).call(head); }catch(e){}
+      } else {
+        // plain
+        const s=0.95;
+        if(pCurrentAvatar){
+          pCurrentAvatar.scale.setScalar(s);
+          pCurrentAvatar.position.set(0, 0, 0);
+          pCurrentAvatar.visible=true;
+          pCurrentAvatar.traverse(o=>{ if(o.isMesh) o.visible=true; });
+          pCurrentAvatar.updateMatrixWorld(true);
+        }
+        if(pCamera){
+          pCamera.position.set(0, 1.4, 2.6);
+          pCamera.lookAt(0, 1.0, 0);
+          pCamera.fov=40;
+          pCamera.updateProjectionMatrix();
+        }
+        if(pRenderer){
+          pRenderer.setSize(previewContainer.clientWidth, 320);
+          pRenderer.setClearColor(0x1a1a2e, 1);
+        }
+      }
+    } catch(e){ console.warn('[preview] framing failed', e); }
+    status.textContent='▶ Playing '+clipName+' ('+avatarSel+')'+(isLegacyPreview?' [legacy]':' [plain]');
+    try{
+      const av = isLegacyPreview ? (head.armature||avatar?.armature) : pCurrentAvatar;
+      if(av) av.visible=true;
+    }catch(e){}
+  }catch(e){
+    status.textContent='Preview failed: '+e.message;
+  }
+}
+document.getElementById('playPreview').onclick=()=>{
+  const c=document.getElementById('previewClip').value;
+  if(c) playPreview(c);
+};
+document.getElementById('stopPreview').onclick=()=>{
+  try{ if(previewMixer) previewMixer.stopAllAction(); }catch(e){}
+  try{ if(pMixer) pMixer.stopAllAction(); }catch(e){}
+  try{ if(pActiveAction) pActiveAction.stop(); }catch(e){}
+  document.getElementById('previewStatus').textContent='Stopped';
+};
+document.getElementById('reloadBtn').onclick=loadCatalog;
+document.getElementById('saveBtn').onclick=async()=>{
+  const grid=document.getElementById('grid');
+  const newMap={};
+  grid.querySelectorAll('input.clipList').forEach(inp=>{
+    const emo=inp.dataset.emo;
+    const list=inp.value.split(',').map(s=>s.trim()).filter(Boolean);
+    newMap[emo]=list;
+  });
+  const r=await fetch('/api/clips',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({go_emotions:newMap})});
+  const status=document.getElementById('status');
+  if(r.ok){ status.textContent='✓ Saved to clip_catalog.json ('+Object.keys(newMap).length+' emotions)'; status.className='text-xs mt-2 h-4 text-emerald-400'; }
+  else { let d=''; try{d=(await r.json()).detail||''}catch(e){} status.textContent='Save failed: '+d; status.className='text-xs mt-2 h-4 text-red-400'; }
+};
+loadCatalog();
+</script>
+</body>
+</html>
