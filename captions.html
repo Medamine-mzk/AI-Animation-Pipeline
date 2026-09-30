@@ -1,0 +1,622 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Video Captions — AI Animation</title>
+<link rel="icon" href="data:,">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:#0a0a0f;color:#fff;font-family:'Inter',system-ui,sans-serif;min-height:100vh}
+  .glass{background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.12)}
+  button{font-family:inherit}
+
+  header{display:flex;justify-content:space-between;align-items:center;gap:12px;
+         padding:14px 20px;max-width:1400px;margin:0 auto}
+  header a{color:rgba(255,255,255,0.6);text-decoration:none;font-size:13px}
+  header a:hover{color:#fff}
+  h1{font-family:'Space Grotesk',sans-serif;font-size:15px;font-weight:600}
+  .badge{font-size:11px;padding:3px 8px;border-radius:999px;background:rgba(139,92,246,0.25);
+         border:1px solid rgba(139,92,246,0.5);color:#c4b5fd;white-space:nowrap}
+
+  main{max-width:1400px;margin:0 auto;padding:0 20px 40px;
+       display:grid;grid-template-columns:1fr 320px;gap:20px;align-items:start}
+  @media (max-width:980px){main{grid-template-columns:1fr}}
+
+  /* ---------------------------------------------------------------- stage */
+  .stage{position:relative;background:#000;border-radius:16px;overflow:hidden;
+         aspect-ratio:16/9;display:flex;align-items:center;justify-content:center}
+  .stage video{width:100%;height:100%;object-fit:contain;display:block;background:#000}
+  /* Shown when there is no video yet (M4 wires the real source). Kept obviously
+     synthetic so it is never mistaken for the user's footage. */
+  .stage-placeholder{position:absolute;inset:0;display:flex;flex-direction:column;
+                      align-items:center;justify-content:center;gap:10px;
+                      background:repeating-linear-gradient(135deg,#14141c 0 24px,#0e0e14 24px 48px);
+                      color:rgba(255,255,255,0.35);font-size:12px;text-align:center;padding:20px}
+  .stage-placeholder .big{font-size:34px;opacity:0.5}
+
+  /* ------------------------------------------------------------- captions */
+  /* Lower-third safe zone, per spec 4. */
+  .caption-layer{position:absolute;left:0;right:0;bottom:8%;display:flex;
+                 justify-content:center;pointer-events:none;padding:0 5%;z-index:5}
+  .caption-plate{max-width:min(88%,980px);background:var(--plate);border-radius:14px;
+                 padding:14px 22px 16px;backdrop-filter:blur(8px);
+                 box-shadow:0 8px 30px rgba(0,0,0,0.45);
+                 /* Page transition: fade + slight rise, 150ms (spec 4). */
+                 opacity:0;transform:translateY(10px);visibility:hidden;
+                 transition:opacity 150ms ease-out,transform 150ms ease-out}
+  /* visibility, not just opacity: a transparent plate still exposes its text to
+     assistive tech, so a screen reader would read captions during silence. */
+  .caption-plate.visible{opacity:1;transform:translateY(0);visibility:visible}
+  .caption-plate[hidden]{display:none}
+
+  .speaker-tag{font-size:11px;font-weight:700;letter-spacing:0.09em;text-transform:uppercase;
+               margin-bottom:8px;display:flex;align-items:center;gap:6px;min-height:14px}
+  .speaker-tag .dot{width:8px;height:8px;border-radius:50%;background:currentColor;flex:none}
+  .speaker-tag .nm{color:var(--speaker-color,inherit)}
+
+  .caption-words{font-size:var(--caption-size,34px);font-weight:700;line-height:1.32;
+                 letter-spacing:-0.01em;text-align:center;
+                 /* Keep to the lower-third: never more than two lines. */
+                 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .w{display:inline-block;color:#fff;border-radius:9px;
+     /* margin is the gap BETWEEN words; padding is the pill's own inset around
+        the glyphs. Keeping them separate is what stops words reading as one
+        run at large caption sizes. Both are in em so they scale with the
+        caption-size control. */
+     margin:0 max(.10em,3px);padding:.05em .14em;
+     transition:background-color 140ms ease-out,color 140ms ease-out,
+                transform 180ms cubic-bezier(0.34,1.56,0.64,1);
+     will-change:transform}
+  /* The currently-spoken word: filled accent pill + small spring pop (spec 4). */
+  .w.active{background-color:var(--active-color);color:#fff;transform:scale(1.13)}
+  .w.past{color:rgba(255,255,255,0.55)}
+  .w.lowconf{text-decoration:underline dotted rgba(255,255,255,0.5);text-underline-offset:4px}
+
+  /* Reduced motion: keep the colour highlight, drop the movement (spec 4). */
+  body.reduced-motion .w{transition:background-color 140ms ease-out,color 140ms ease-out;
+                         transform:none !important}
+  body.reduced-motion .caption-plate{transform:none;transition:opacity 150ms ease-out}
+
+  /* High contrast: opaque plate, pure white text (spec 4). */
+  body.high-contrast{--plate:#000}
+  body.high-contrast .w{color:#fff}
+  body.high-contrast .w.past{color:#fff}
+  body.high-contrast .w.active{background-color:var(--active-color);color:#fff;
+                               outline:3px solid #fff}
+
+  /* ------------------------------------------------------------ transport */
+  .transport{display:flex;align-items:center;gap:12px;padding:12px 4px 0;flex-wrap:wrap}
+  .transport button{background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);
+                     color:#fff;border-radius:8px;padding:8px 14px;font-size:13px;cursor:pointer;
+                     transition:background 0.2s}
+  .transport button:hover:not(:disabled){background:rgba(255,255,255,0.16)}
+  .transport button:disabled{opacity:0.4;cursor:not-allowed}
+  .transport button.primary{background:#0ea5e9;border-color:#0ea5e9}
+  .transport button.primary:hover:not(:disabled){background:#0284c7}
+  .scrub{flex:1;min-width:180px;accent-color:#8b5cf6}
+  .time{font-variant-numeric:tabular-nums;font-size:12px;color:rgba(255,255,255,0.6);min-width:96px;text-align:right}
+
+  /* ---------------------------------------------------------------- panel */
+  aside{display:flex;flex-direction:column;gap:14px}
+  .card{border-radius:14px;padding:14px}
+  .card h2{font-family:'Space Grotesk',sans-serif;font-size:13px;font-weight:600;margin-bottom:10px}
+  .legend{display:flex;flex-direction:column;gap:8px}
+  .legend-row{display:flex;align-items:center;gap:9px;font-size:12px}
+  .legend-row .swatch{width:12px;height:12px;border-radius:4px;flex:none}
+  .legend-row .meta{margin-left:auto;color:rgba(255,255,255,0.4);font-size:11px;
+                    font-variant-numeric:tabular-nums}
+
+  .field{display:flex;flex-direction:column;gap:6px;margin-bottom:14px}
+  .field:last-child{margin-bottom:0}
+  .field label{font-size:11px;color:rgba(255,255,255,0.6);display:flex;justify-content:space-between}
+  .field input[type=range]{width:100%;accent-color:#8b5cf6}
+  .field select{background:rgba(0,0,0,0.4);color:#fff;border:1px solid rgba(255,255,255,0.18);
+                border-radius:7px;padding:6px 8px;font-size:12px;width:100%}
+  .toggle{display:flex;align-items:center;gap:8px;font-size:12px;padding:7px 0;cursor:pointer}
+  .toggle input{accent-color:#8b5cf6;width:15px;height:15px}
+
+  .note{font-size:11px;line-height:1.5;color:rgba(255,255,255,0.45);
+        padding:9px 11px;border-radius:9px;background:rgba(255,255,255,0.04);
+        border:1px solid rgba(255,255,255,0.08)}
+  .note.warn{color:#fcd34d;border-color:rgba(252,211,77,0.3);background:rgba(252,211,77,0.08)}
+  .note.err{color:#f87171;border-color:rgba(248,113,113,0.3);background:rgba(248,113,113,0.08)}
+  .note strong{color:inherit}
+
+  .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+         color:rgba(255,255,255,0.4);font-size:13px;text-align:center;padding:24px;z-index:6}
+</style>
+</head>
+<body>
+
+<header>
+  <div style="display:flex;align-items:center;gap:12px">
+    <a href="index.html">&larr; Landing</a>
+    <h1>Video Captions</h1>
+  </div>
+  <span class="badge" id="jobBadge">demo</span>
+</header>
+
+<main>
+  <section>
+    <div class="stage" id="stage">
+      <video id="video" playsinline preload="metadata"></video>
+      <div class="stage-placeholder" id="placeholder">
+        <div class="big">&#127916;</div>
+        <div><strong>No video loaded</strong></div>
+        <div>Captions are running on a synthetic clock so timing can be checked.<br>
+             Video input arrives with the upload step.</div>
+      </div>
+
+      <div class="caption-layer">
+        <div class="caption-plate" id="plate">
+          <div class="speaker-tag" id="tag" hidden>
+            <span class="dot"></span><span class="nm"></span>
+          </div>
+          <div class="caption-words" id="words"></div>
+        </div>
+      </div>
+
+      <div class="empty" id="emptyMsg" hidden></div>
+    </div>
+
+    <div class="transport">
+      <button class="primary" id="playBtn" disabled>&#9654; Play</button>
+      <button id="restartBtn" disabled>&#8635; Restart</button>
+      <input type="range" class="scrub" id="scrub" min="0" max="1000" value="0" disabled>
+      <span class="time" id="time">0:00.0 / 0:00.0</span>
+    </div>
+  </section>
+
+  <aside>
+    <div class="card glass">
+      <h2>Speakers</h2>
+      <div class="legend" id="legend"></div>
+    </div>
+
+    <div class="card glass">
+      <h2>Appearance</h2>
+      <div class="field">
+        <label for="size">Caption size <span id="sizeVal">34px</span></label>
+        <input type="range" id="size" min="18" max="64" step="1" value="34">
+      </div>
+      <div class="field">
+        <label for="pos">Vertical position</label>
+        <select id="pos">
+          <option value="8">Lower third</option>
+          <option value="18">Middle lower</option>
+          <option value="28">Centre</option>
+        </select>
+      </div>
+      <label class="toggle"><input type="checkbox" id="reducedMotion"> Reduced motion</label>
+      <label class="toggle"><input type="checkbox" id="highContrast"> High contrast</label>
+    </div>
+
+    <div class="card glass">
+      <h2>Source of truth</h2>
+      <div class="note" id="provenance">Loading&hellip;</div>
+      <div class="note warn hidden" id="mismatch" style="margin-top:8px"></div>
+    </div>
+  </aside>
+</main>
+
+<script>
+'use strict';
+
+const state = {
+  captions: null,
+  stylesById: {},
+  timeMs: 0,
+  playing: false,
+  // Page and word currently drawn. Tracking them separately is what keeps the
+  // per-frame cost to two class toggles instead of a full re-render.
+  drawnPage: -1,
+  drawnWord: -1,
+  pageSpans: [],
+  video: null,
+  hasVideo: false,
+  mediaDurationMs: 0,
+  rafId: null,
+  lastFrame: 0,
+};
+
+const el = {
+  stage: document.getElementById('stage'),
+  video: document.getElementById('video'),
+  placeholder: document.getElementById('placeholder'),
+  plate: document.getElementById('plate'),
+  tag: document.getElementById('tag'),
+  tagName: document.querySelector('#tag .nm'),
+  words: document.getElementById('words'),
+  legend: document.getElementById('legend'),
+  playBtn: document.getElementById('playBtn'),
+  restartBtn: document.getElementById('restartBtn'),
+  scrub: document.getElementById('scrub'),
+  time: document.getElementById('time'),
+  emptyMsg: document.getElementById('emptyMsg'),
+  jobBadge: document.getElementById('jobBadge'),
+  provenance: document.getElementById('provenance'),
+  mismatch: document.getElementById('mismatch'),
+  size: document.getElementById('size'),
+  sizeVal: document.getElementById('sizeVal'),
+  pos: document.getElementById('pos'),
+  reducedMotion: document.getElementById('reducedMotion'),
+  highContrast: document.getElementById('highContrast'),
+};
+
+const LOW_CONFIDENCE = 0.5;
+
+function fmt(ms) {
+  const total = Math.max(0, ms) / 1000;
+  const m = Math.floor(total / 60);
+  const s = total - m * 60;
+  return m + ':' + (s < 10 ? '0' : '') + s.toFixed(1);
+}
+
+// ---------------------------------------------------------------- data load
+
+function activeStyle(speakerId) {
+  return state.stylesById[speakerId] || { color: '#ffffff', activeColor: '#1f2937' };
+}
+
+function showEmpty(message, kind) {
+  el.emptyMsg.hidden = false;
+  el.emptyMsg.textContent = message;
+  el.emptyMsg.className = 'empty' + (kind ? ' ' + kind : '');
+  el.plate.hidden = true;
+  el.playBtn.disabled = true;
+  el.restartBtn.disabled = true;
+  el.scrub.disabled = true;
+}
+
+function renderLegend(captions) {
+  el.legend.innerHTML = '';
+  for (const style of captions.styles) {
+    const words = captions.pages
+      .filter(function (p) { return p.speakerId === style.speakerId; })
+      .reduce(function (n, p) { return n + p.words.length; }, 0);
+    const row = document.createElement('div');
+    row.className = 'legend-row';
+    const sw = document.createElement('span');
+    sw.className = 'swatch';
+    sw.style.background = style.color;
+    const label = document.createElement('span');
+    label.textContent = 'Speaker ' + (style.index + 1) + ' (' + style.speakerId + ')';
+    const meta = document.createElement('span');
+    meta.className = 'meta';
+    meta.textContent = words + ' words · ' + style.contrastRatio + ':1';
+    row.append(sw, label, meta);
+    el.legend.appendChild(row);
+  }
+}
+
+function renderProvenance(captions) {
+  // Be explicit about where the timings came from. The whole point of this
+  // feature is that word timings are measured, not guessed.
+  const parts = [
+    'Timings: <strong>' + (captions.wordAlignment || 'measured') +
+      '</strong> (WhisperX forced alignment, not estimated from word count).',
+    captions.language ? 'Language: <strong>' + captions.language + '</strong>.' : 'Language: not reported.',
+    captions.pages.length + ' pages · ' + captions.wordCount + ' words.',
+  ];
+  el.provenance.className = 'note';
+  el.provenance.innerHTML = parts.join(' ');
+}
+
+async function loadCaptions() {
+  const params = new URLSearchParams(location.search);
+  const job = params.get('job');
+  const video = params.get('video');
+  const bust = Date.now();
+  const url = job
+    ? 'jobs/' + encodeURIComponent(job) + '/captions.json?t=' + bust
+    : 'captions-demo/captions.json?t=' + bust;
+
+  el.jobBadge.textContent = job || 'demo';
+
+  let raw;
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    raw = await res.json();
+  } catch (err) {
+    showEmpty(
+      job
+        ? 'No captions found for job ' + job + '. It may still be processing, or the job was deleted.'
+        : 'Could not load the demo captions (' + err.message + ').',
+      'err'
+    );
+    el.provenance.className = 'note err';
+    el.provenance.textContent = 'No caption data was loaded, so nothing is being previewed.';
+    return;
+  }
+
+  if (!raw || !Array.isArray(raw.pages) || raw.pages.length === 0) {
+    showEmpty('This clip produced no caption pages. That usually means the transcription found no speech.', 'warn');
+    el.provenance.className = 'note warn';
+    el.provenance.textContent = 'Refusing to show a blank caption bar — an empty page would read as “captions finished”.';
+    return;
+  }
+
+  state.captions = raw;
+  state.stylesById = {};
+  for (const s of raw.styles) state.stylesById[s.speakerId] = s;
+
+  renderLegend(raw);
+  renderProvenance(raw);
+
+  el.emptyMsg.hidden = true;
+  el.plate.hidden = false;
+  el.playBtn.disabled = false;
+  el.restartBtn.disabled = false;
+  el.scrub.disabled = false;
+  el.scrub.max = String(raw.durationMs);
+
+  await maybeLoadVideo(job, video);
+}
+
+// The real video lands with the upload step (M4). Until then the stage runs on
+// a synthetic clock, so caption timing can still be verified honestly.
+// ?video=<path> forces a specific file, which is how the renderer is checked
+// against real footage before any upload flow exists.
+async function maybeLoadVideo(job, forced) {
+  const candidates = [];
+  if (forced) {
+    candidates.push(forced);
+  } else if (job) {
+    candidates.push(
+      'jobs/' + encodeURIComponent(job) + '/source.mp4',
+      'jobs/' + encodeURIComponent(job) + '/input.mp4'
+    );
+  }
+  for (const src of candidates) {
+    try {
+      const res = await fetch(src, { method: 'HEAD', cache: 'no-store' });
+      if (res.ok) {
+        el.video.src = src;
+        el.placeholder.style.display = 'none';
+        state.hasVideo = true;
+        el.video.addEventListener('loadedmetadata', function () {
+          const mediaMs = Math.round(el.video.duration * 1000);
+          state.mediaDurationMs = mediaMs;
+          if (state.captions && mediaMs < state.captions.durationMs) {
+            // Honest mismatch reporting, shown alongside the provenance rather
+            // than replacing it: both facts matter, and truncating silently
+            // would let a user believe the clip was fully captioned when the
+            // tail is missing. In this project that is exactly the kind of
+            // quiet fabrication the surrounding pipeline avoids.
+            const overhang = ((state.captions.durationMs - mediaMs) / 1000).toFixed(1);
+            const cutPages = state.captions.pages.filter(
+              (p) => p.startMs >= mediaMs
+            ).length;
+            el.mismatch.classList.remove('hidden');
+            el.mismatch.innerHTML =
+              'Captions run <strong>' + overhang + 's longer</strong> than this ' +
+              'video (' + (mediaMs / 1000).toFixed(1) + 's). ' +
+              (cutPages > 0
+                ? '<strong>' + cutPages + ' caption page(s) will not be shown.</strong> '
+                : '') +
+              'The last caption line is cut off.';
+            el.scrub.max = String(mediaMs);
+            state.captions.durationMs = mediaMs;
+          }
+        });
+        return;
+      }
+    } catch (e) { /* try the next candidate */ }
+  }
+}
+
+// ------------------------------------------------------------- rendering
+
+function pageAt(timeMs) {
+  const pages = state.captions.pages;
+  for (let i = 0; i < pages.length; i++) {
+    if (timeMs >= pages[i].startMs && timeMs < pages[i].endMs) return pages[i];
+  }
+  return null;
+}
+
+// The word being spoken. Holds the last word whose start has passed so the pill
+// does not blink off during the small gaps between words.
+function wordIndexIn(page, timeMs) {
+  let chosen = -1;
+  for (let i = 0; i < page.words.length; i++) {
+    if (page.words[i].startMs <= timeMs) chosen = i;
+    else break;
+  }
+  return chosen;
+}
+
+function drawPage(page) {
+  const style = activeStyle(page.speakerId);
+  el.plate.style.setProperty('--speaker-color', style.color);
+  el.plate.style.setProperty('--active-color', style.activeColor);
+
+  el.tag.hidden = false;
+  el.tagName.textContent = 'Speaker ' + (style.index + 1);
+
+  el.words.innerHTML = '';
+  state.pageSpans = [];
+  for (const word of page.words) {
+    const span = document.createElement('span');
+    span.className = 'w';
+    span.textContent = word.text.trim();
+    if (typeof word.confidence === 'number' && word.confidence < LOW_CONFIDENCE) {
+      // spec 7: mark words a human should double-check rather than trusting all
+      span.classList.add('lowconf');
+      span.title = 'Low confidence (' + word.confidence.toFixed(2) + ') — worth checking';
+    }
+    el.words.appendChild(span);
+    state.pageSpans.push(span);
+  }
+
+  el.plate.classList.add('visible');
+  state.drawnPage = page.index;
+  state.drawnWord = -1;
+}
+
+function drawWord(index) {
+  for (let i = 0; i < state.pageSpans.length; i++) {
+    const span = state.pageSpans[i];
+    const isActive = i === index;
+    span.classList.toggle('active', isActive);
+    span.classList.toggle('past', i < index);
+  }
+  state.drawnWord = index;
+}
+
+function clearCaptions() {
+  el.plate.classList.remove('visible');
+  el.tag.hidden = true;
+  state.drawnPage = -1;
+  state.drawnWord = -1;
+  state.pageSpans = [];
+}
+
+// Called every frame. Redraws only when the page or the word actually changes.
+function renderAt(timeMs) {
+  if (!state.captions) return;
+  const page = pageAt(timeMs);
+  if (!page) {
+    // spec 7: no caption page during silence.
+    if (state.drawnPage !== -1) clearCaptions();
+  } else if (page.index !== state.drawnPage) {
+    drawPage(page);
+    drawWord(wordIndexIn(page, timeMs));
+  } else {
+    const idx = wordIndexIn(page, timeMs);
+    if (idx !== state.drawnWord) drawWord(idx);
+  }
+}
+
+// ----------------------------------------------------------------- clock
+
+function currentTimeMs() {
+  if (state.hasVideo && el.video.readyState >= 1) {
+    return el.video.currentTime * 1000;
+  }
+  return state.timeMs;
+}
+
+function tick(ts) {
+  state.rafId = requestAnimationFrame(tick);
+  const dt = state.lastFrame ? ts - state.lastFrame : 0;
+  state.lastFrame = ts;
+
+  if (state.playing) {
+    if (state.hasVideo) {
+      if (el.video.ended) { setPlaying(false); return; }
+    } else {
+      state.timeMs += dt;
+      if (state.timeMs >= state.captions.durationMs) {
+        state.timeMs = state.captions.durationMs;
+        setPlaying(false);
+      }
+    }
+  }
+
+  const now = currentTimeMs();
+  renderAt(now);
+  el.time.textContent = fmt(now) + ' / ' + fmt(state.captions ? state.captions.durationMs : 0);
+  if (!scrubbing) el.scrub.value = String(Math.round(now));
+}
+
+function setPlaying(on) {
+  state.playing = on;
+  el.playBtn.innerHTML = on ? '&#10074;&#10074; Pause' : '&#9654; Play';
+  if (state.hasVideo) {
+    if (on) el.video.play().catch(function () { state.playing = false; });
+    else el.video.pause();
+  }
+}
+
+let scrubbing = false;
+el.scrub.addEventListener('pointerdown', function () { scrubbing = true; });
+window.addEventListener('pointerup', function () { scrubbing = false; });
+el.scrub.addEventListener('input', function () {
+  const target = (Number(el.scrub.value) / 1000) * (state.captions ? state.captions.durationMs : 0);
+  if (state.hasVideo) el.video.currentTime = target / 1000;
+  else state.timeMs = target;
+  renderAt(target);
+});
+
+el.playBtn.onclick = function () { setPlaying(!state.playing); };
+el.restartBtn.onclick = function () {
+  if (state.hasVideo) el.video.currentTime = 0;
+  else state.timeMs = 0;
+  clearCaptions();
+  renderAt(currentTimeMs());
+};
+el.video.addEventListener('ended', function () { setPlaying(false); });
+
+// ------------------------------------------------------- appearance (M3)
+
+function persist(key, value) {
+  try { localStorage.setItem('captions.' + key, String(value)); } catch (e) {}
+}
+function recall(key, fallback) {
+  try {
+    const v = localStorage.getItem('captions.' + key);
+    return v === null ? fallback : v;
+  } catch (e) { return fallback; }
+}
+
+function applySize(px) {
+  document.body.style.setProperty('--caption-size', px + 'px');
+  el.sizeVal.textContent = px + 'px';
+}
+el.size.addEventListener('input', function () {
+  applySize(el.size.value);
+  persist('size', el.size.value);
+});
+
+function applyPos(percent) {
+  document.querySelector('.caption-layer').style.bottom = percent + '%';
+}
+el.pos.addEventListener('change', function () {
+  applyPos(el.pos.value);
+  persist('pos', el.pos.value);
+});
+
+el.reducedMotion.addEventListener('change', function () {
+  document.body.classList.toggle('reduced-motion', el.reducedMotion.checked);
+  persist('reducedMotion', el.reducedMotion.checked);
+});
+el.highContrast.addEventListener('change', function () {
+  document.body.classList.toggle('high-contrast', el.highContrast.checked);
+  persist('highContrast', el.highContrast.checked);
+});
+
+function restoreAppearance() {
+  applySize(recall('size', el.size.value));
+  el.size.value = recall('size', el.size.value);
+  el.pos.value = recall('pos', el.pos.value);
+  applyPos(el.pos.value);
+  el.reducedMotion.checked = recall('reducedMotion', 'false') === 'true';
+  el.highContrast.checked = recall('highContrast', 'false') === 'true';
+  document.body.classList.toggle('reduced-motion', el.reducedMotion.checked);
+  document.body.classList.toggle('high-contrast', el.highContrast.checked);
+}
+
+restoreAppearance();
+state.rafId = requestAnimationFrame(tick);
+loadCaptions();
+
+// Top-level `const` in a classic script lives in the global lexical scope, not
+// on `window`, so nothing here is reachable from devtools automation or a
+// browser test. Expose the pieces that are useful to poke at deliberately
+// rather than leaking every binding.
+window.captionsApp = {
+  state,
+  renderAt,
+  currentTimeMs,
+  setPlaying,
+  pageAt,
+  wordIndexIn,
+  loadCaptions,
+};
+</script>
+</body>
+</html>

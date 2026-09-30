@@ -7,9 +7,16 @@ per-speaker colour coding meaningful (spec 4).
 
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field, model_validator
 
 SCHEMA_VERSION = "captions/1"
+
+#: Mirrors ``WordTimeline.wordAlignment``. Re-declared rather than imported so
+#: the captions contract cannot silently drift if the timeline's provenance
+#: rules change; the test suite asserts the two stay in step.
+WordAlignment = Literal["measured"]
 
 
 class PageWord(BaseModel):
@@ -73,6 +80,24 @@ class CaptionSet(BaseModel):
     durationMs: int = Field(ge=0)
     pages: list[CaptionPage] = Field(min_length=1)
     styles: list[SpeakerStyle] = Field(min_length=1)
+    #: Provenance of the underlying word timings, carried through from
+    #: WordTimeline. The client has no other way to tell whether a caption is
+    #: driven by forced alignment or by a guess, and this feature's entire value
+    #: depends on that being real -- so it travels with the data instead of being
+    #: something the UI has to remember to say.
+    wordAlignment: WordAlignment = "measured"
+    #: Total words across all pages, precomputed so the client can report
+    #: coverage without walking the page list.
+    wordCount: int = Field(ge=1)
+
+    @model_validator(mode="after")
+    def word_count_matches_pages(self) -> "CaptionSet":
+        actual = sum(len(p.words) for p in self.pages)
+        if actual != self.wordCount:
+            raise ValueError(
+                f"wordCount {self.wordCount} does not match {actual} words in pages"
+            )
+        return self
 
     @model_validator(mode="after")
     def style_covers_every_speaker(self) -> "CaptionSet":

@@ -1,0 +1,375 @@
+{
+  "schemaVersion": "captions/1",
+  "language": "en",
+  "durationMs": 23474,
+  "pages": [
+    {
+      "index": 0,
+      "speakerId": "SPEAKER_00",
+      "startMs": 1627,
+      "endMs": 4328,
+      "words": [
+        {
+          "text": "Mom,",
+          "startMs": 1627,
+          "endMs": 2007,
+          "confidence": null
+        },
+        {
+          "text": " I",
+          "startMs": 2587,
+          "endMs": 2667,
+          "confidence": null
+        },
+        {
+          "text": " received",
+          "startMs": 2707,
+          "endMs": 3108,
+          "confidence": null
+        },
+        {
+          "text": " a",
+          "startMs": 3148,
+          "endMs": 3168,
+          "confidence": null
+        },
+        {
+          "text": " letter",
+          "startMs": 3228,
+          "endMs": 3568,
+          "confidence": null
+        },
+        {
+          "text": " from",
+          "startMs": 3608,
+          "endMs": 3768,
+          "confidence": null
+        },
+        {
+          "text": " Chris.",
+          "startMs": 3888,
+          "endMs": 4328,
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "speakerId": "SPEAKER_00",
+      "startMs": 4768,
+      "endMs": 6529,
+      "words": [
+        {
+          "text": " The",
+          "startMs": 4768,
+          "endMs": 4868,
+          "confidence": null
+        },
+        {
+          "text": " Browns",
+          "startMs": 4908,
+          "endMs": 5188,
+          "confidence": null
+        },
+        {
+          "text": " are",
+          "startMs": 5228,
+          "endMs": 5308,
+          "confidence": null
+        },
+        {
+          "text": " inviting",
+          "startMs": 5328,
+          "endMs": 5708,
+          "confidence": null
+        },
+        {
+          "text": " me",
+          "startMs": 5728,
+          "endMs": 5828,
+          "confidence": null
+        },
+        {
+          "text": " to",
+          "startMs": 5868,
+          "endMs": 5968,
+          "confidence": null
+        },
+        {
+          "text": " London.",
+          "startMs": 6008,
+          "endMs": 6529,
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "speakerId": "SPEAKER_00",
+      "startMs": 6949,
+      "endMs": 7629,
+      "words": [
+        {
+          "text": " Can",
+          "startMs": 6949,
+          "endMs": 7509,
+          "confidence": null
+        },
+        {
+          "text": " I",
+          "startMs": 7529,
+          "endMs": 7549,
+          "confidence": null
+        },
+        {
+          "text": " go?",
+          "startMs": 7569,
+          "endMs": 7629,
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "speakerId": "SPEAKER_00",
+      "startMs": 8629,
+      "endMs": 10530,
+      "words": [
+        {
+          "text": " Well,",
+          "startMs": 8629,
+          "endMs": 8989,
+          "confidence": null
+        },
+        {
+          "text": " I'm",
+          "startMs": 9810,
+          "endMs": 9930,
+          "confidence": null
+        },
+        {
+          "text": " not",
+          "startMs": 9950,
+          "endMs": 10110,
+          "confidence": null
+        },
+        {
+          "text": " sure.",
+          "startMs": 10230,
+          "endMs": 10530,
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "speakerId": "SPEAKER_00",
+      "startMs": 11670,
+      "endMs": 13471,
+      "words": [
+        {
+          "text": " It's",
+          "startMs": 11670,
+          "endMs": 11810,
+          "confidence": null
+        },
+        {
+          "text": " a",
+          "startMs": 11830,
+          "endMs": 11870,
+          "confidence": null
+        },
+        {
+          "text": " wonderful",
+          "startMs": 11970,
+          "endMs": 12431,
+          "confidence": null
+        },
+        {
+          "text": " opportunity,",
+          "startMs": 12491,
+          "endMs": 13171,
+          "confidence": null
+        },
+        {
+          "text": " Mom.",
+          "startMs": 13211,
+          "endMs": 13471,
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "index": 5,
+      "speakerId": "SPEAKER_01",
+      "startMs": 14651,
+      "endMs": 15432,
+      "words": [
+        {
+          "text": " I",
+          "startMs": 14651,
+          "endMs": 14711,
+          "confidence": null
+        },
+        {
+          "text": " can't",
+          "startMs": 14751,
+          "endMs": 15012,
+          "confidence": null
+        },
+        {
+          "text": " miss",
+          "startMs": 15032,
+          "endMs": 15252,
+          "confidence": null
+        },
+        {
+          "text": " it.",
+          "startMs": 15352,
+          "endMs": 15432,
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "index": 6,
+      "speakerId": "SPEAKER_01",
+      "startMs": 15812,
+      "endMs": 16432,
+      "words": [
+        {
+          "text": " Please,",
+          "startMs": 15812,
+          "endMs": 16112,
+          "confidence": null
+        },
+        {
+          "text": " Mom.",
+          "startMs": 16172,
+          "endMs": 16432,
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "index": 7,
+      "speakerId": "SPEAKER_01",
+      "startMs": 20113,
+      "endMs": 20553,
+      "words": [
+        {
+          "text": " Now",
+          "startMs": 20113,
+          "endMs": 20273,
+          "confidence": null
+        },
+        {
+          "text": " wait.",
+          "startMs": 20313,
+          "endMs": 20553,
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "index": 8,
+      "speakerId": "SPEAKER_01",
+      "startMs": 20813,
+      "endMs": 22734,
+      "words": [
+        {
+          "text": " We",
+          "startMs": 20813,
+          "endMs": 20914,
+          "confidence": null
+        },
+        {
+          "text": " should",
+          "startMs": 20934,
+          "endMs": 21114,
+          "confidence": null
+        },
+        {
+          "text": " discuss",
+          "startMs": 21134,
+          "endMs": 21514,
+          "confidence": null
+        },
+        {
+          "text": " this",
+          "startMs": 21554,
+          "endMs": 21714,
+          "confidence": null
+        },
+        {
+          "text": " with",
+          "startMs": 21754,
+          "endMs": 21874,
+          "confidence": null
+        },
+        {
+          "text": " Daddy",
+          "startMs": 21934,
+          "endMs": 22274,
+          "confidence": null
+        },
+        {
+          "text": " when",
+          "startMs": 22494,
+          "endMs": 22614,
+          "confidence": null
+        },
+        {
+          "text": " he",
+          "startMs": 22654,
+          "endMs": 22734,
+          "confidence": null
+        }
+      ]
+    },
+    {
+      "index": 9,
+      "speakerId": "SPEAKER_01",
+      "startMs": 22774,
+      "endMs": 23474,
+      "words": [
+        {
+          "text": " comes",
+          "startMs": 22774,
+          "endMs": 22974,
+          "confidence": null
+        },
+        {
+          "text": " back",
+          "startMs": 23014,
+          "endMs": 23194,
+          "confidence": null
+        },
+        {
+          "text": " home.",
+          "startMs": 23254,
+          "endMs": 23474,
+          "confidence": null
+        }
+      ]
+    }
+  ],
+  "styles": [
+    {
+      "speakerId": "SPEAKER_00",
+      "index": 0,
+      "color": "#7dd3fc",
+      "activeColor": "#2f505f",
+      "contrastRatio": 11.76
+    },
+    {
+      "speakerId": "SPEAKER_01",
+      "index": 1,
+      "color": "#fcd34d",
+      "activeColor": "#5f501d",
+      "contrastRatio": 13.6
+    }
+  ],
+  "wordAlignment": "measured",
+  "wordCount": 45
+}

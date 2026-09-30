@@ -264,6 +264,8 @@ def build_caption_set(
         durationMs=timeline.durationMs,
         pages=pages,
         styles=styles,
+        wordAlignment=timeline.wordAlignment,
+        wordCount=sum(len(p.words) for p in pages),
     )
 
 

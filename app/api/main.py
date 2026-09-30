@@ -1,6 +1,8 @@
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+
+from app.api.captions import router as captions_router
 from fastapi.responses import FileResponse
 import uuid, json, pathlib, subprocess, sys, os, math, threading, time
 from typing import Literal
@@ -1391,3 +1393,7 @@ app.mount("/jobs", StaticFiles(directory=str(ROOT / "jobs")), name="jobs")
 app.mount("/app", StaticFiles(directory=str(ROOT / "app")), name="app")
 app.mount("/tools", StaticFiles(directory=str(ROOT / "tools")), name="tools")
 app.mount("/media", StaticFiles(directory=str(ROOT / "media")), name="media")
+
+# Captions feature (video -> burned-in captions). Self-contained router; it reads
+# and writes only jobs/cap_{id}/ and never touches the 3D feature's jobs.
+app.include_router(captions_router)
