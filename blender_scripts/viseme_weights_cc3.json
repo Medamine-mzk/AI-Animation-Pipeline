@@ -1,0 +1,13 @@
+{
+  "__comment__": "Rhubarb viseme -> Reallusion CC3+ morph weights (V_* / AM* naming). Values 0..1.",
+  "a": {"Jaw_Open": 0.8, "V_Open": 1.0},
+  "b": {"V_Wide": 0.6, "Mouth_Close": 0.4},
+  "c": {"V_Tight": 0.8, "V_Lip_Open": 0.3},
+  "d": {"Jaw_Open": 1.0, "V_Open": 0.7, "Mouth_Down": 0.2},
+  "e": {"V_Lip_Open": 0.8, "Mouth_Stretch_L": 0.4, "Mouth_Stretch_R": 0.4},
+  "f": {"V_Dental_Lip": 1.0},
+  "g": {"V_Tight_O": 0.8, "Mouth_Funnel_Up_L": 0.4, "Mouth_Funnel_Up_R": 0.4},
+  "h": {"V_Tight_O": 1.0, "Mouth_Pucker_Up_L": 0.5, "Mouth_Pucker_Up_R": 0.5, "Mouth_Funnel_Down_L": 0.3, "Mouth_Funnel_Down_R": 0.3},
+  "x": {},
+  "eyeblink": {"Eye_Blink_L": 1.0, "Eye_Blink_R": 1.0}
+}

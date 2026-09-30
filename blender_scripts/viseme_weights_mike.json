@@ -1,0 +1,12 @@
+{
+  "x": {},
+  "eyeblink": {"Blink_Left": 1.0, "Blink_Right": 1.0},
+  "a": {"Jaw_Down": 0.9, "MouthOpen": 0.7, "Midmouth_Left": 0.5, "Midmouth_Right": 0.5},
+  "b": {"MouthUp": 0.6, "MouthDown": 0.6, "CheekPuff_Left": 0.2, "CheekPuff_Right": 0.2},
+  "c": {"Jaw_Down": 0.5, "MouthOpen": 0.4, "Midmouth_Left": 0.5, "Midmouth_Right": 0.5, "MouthNarrow_Left": 0.3, "MouthNarrow_Right": 0.3},
+  "d": {"Jaw_Down": 0.55, "Smile_Left": 0.7, "Smile_Right": 0.7, "Midmouth_Left": 0.4, "Midmouth_Right": 0.4, "MouthNarrow_Left": 0.2, "MouthNarrow_Right": 0.2},
+  "e": {"Jaw_Down": 0.6, "MouthOpen": 0.4, "Midmouth_Left": 0.5, "Midmouth_Right": 0.5, "Smile_Left": 0.2, "Smile_Right": 0.2, "MouthNarrow_Left": 0.25, "MouthNarrow_Right": 0.25},
+  "f": {"Jaw_Down": 0.8, "MouthOpen": 0.6, "Midmouth_Left": 0.4, "Midmouth_Right": 0.4},
+  "g": {"Jaw_Down": 0.65, "MouthOpen": 0.5, "MouthWhistle_NarrowAdjust_Left": 0.6, "MouthWhistle_NarrowAdjust_Right": 0.6, "MouthNarrow_Left": 0.4, "MouthNarrow_Right": 0.4},
+  "h": {"MouthNarrow_Left": 0.8, "MouthNarrow_Right": 0.8, "MouthWhistle_NarrowAdjust_Left": 0.3, "MouthWhistle_NarrowAdjust_Right": 0.3, "Jaw_Down": 0.25}
+}

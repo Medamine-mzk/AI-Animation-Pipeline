@@ -32,14 +32,15 @@ def render_video(
         "-i", pattern,
     ]
     if audio_wav is not None:
-        cmd += ["-ss", f"{start:.3f}"]
-        if seconds is not None:
-            cmd += ["-t", f"{seconds:.3f}"]
         cmd += ["-i", str(audio_wav)]
+    if seconds is not None:
+        cmd += ["-t", f"{seconds:.3f}"]
     cmd += [
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
     ]
     if audio_wav is not None:
+        if start > 0:
+            cmd += ["-af", f"adelay={int(start * 1000)}:all=1"]
         cmd += ["-c:a", "aac", "-shortest"]
     cmd.append(str(output_path))
     subprocess.run(cmd, check=True)
@@ -52,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-o", "--output", default=str(ROOT / "jobs" / "golden" / "output.mp4"))
     parser.add_argument("--fps", type=int, default=24)
     parser.add_argument("--audio", default=str(ROOT / "media" / "golden_clip.wav"))
-    parser.add_argument("--start", type=float, default=0.0, help="audio offset in seconds")
+    parser.add_argument("--start", type=float, default=0.0, help="delay audio by N seconds (intro card time)")
     parser.add_argument("--seconds", type=float, default=None, help="clip length")
     parser.add_argument("--no-audio", action="store_true")
     args = parser.parse_args(argv)

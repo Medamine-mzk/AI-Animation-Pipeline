@@ -1,0 +1,10 @@
+{
+  "L1": {"hemi": 1.6, "amb": 0.5, "key": 5.0, "fill": 2.0, "rim": 1.0, "world": [0.02, 0.02, 0.025, 0.0], "exposure": 0.5, "gtao": [false, 0.0]},
+  "L2": {"hemi": 6.0, "amb": 1.5, "key": 25.0, "fill": 8.0, "rim": 4.0, "world": [0.12, 0.12, 0.12, 1.0], "exposure": 0.6, "gtao": [true, 0.35]},
+  "L3": {"hemi": 3.6, "amb": 1.1, "key": 20.0, "fill": 8.0, "rim": 4.0, "world": [0.12, 0.12, 0.13, 1.0], "exposure": 0.6, "gtao": [true, 0.35]},
+  "L4": {"hemi": 4.4, "amb": 1.4, "key": 25.0, "fill": 10.0, "rim": 7.2, "world": [0.24, 0.24, 0.26, 1.8], "exposure": 1.0, "gtao": [true, 0.6]},
+  "L5": {"hemi": 3.2, "amb": 0.9, "key": 12.0, "fill": 4.0, "rim": 2.4, "world": [0.14, 0.13, 0.12, 1.0], "exposure": 0.4, "gtao": [true, 0.35]},
+  "L6": {"hemi": 3.2, "amb": 0.9, "key": 12.8, "fill": 4.8, "rim": 3.6, "world": [0.12, 0.14, 0.16, 0.9], "exposure": 0.3, "gtao": [true, 0.35]},
+  "WHITE": {"hemi": 4.0, "amb": 1.0, "key": 18.0, "fill": 6.0, "rim": 3.0, "world": [1.0, 1.0, 1.0, 1.0], "exposure": 0.7, "gtao": [false, 0.0]},
+  "meta": {"three_scale": 7.8, "blender_energy_from_three_intensity": 7.8}
+}

@@ -8,6 +8,8 @@ Emotion = Literal[
     "neutral", "happy", "sad", "angry", "surprised", "worried", "excited", "annoyed"
 ]
 Shot = Literal["wide", "medium", "closeup"]
+Gender = Literal["male", "female", "unknown"]
+AgeGroup = Literal["child", "teen", "adult", "elder", "unknown"]
 Setting = Literal[
     "living_room",
     "kitchen",
@@ -25,6 +27,8 @@ class Character(BaseModel):
     id: str = Field(min_length=1)
     speaker_ref: str = Field(min_length=1)
     role: str = Field(min_length=1)
+    gender: Gender = "unknown"  # inferred from dialogue by the structure stage
+    age_group: AgeGroup = "unknown"
     sprite: str | None = None  # resolved by the asset stage (M3)
 
 

@@ -63,3 +63,23 @@ class BackgroundLibrary(BaseModel):
             if entry.setting == setting:
                 return entry.file
         raise KeyError(f"no background for setting {setting!r}")
+
+
+class Live2DModel(BaseModel):
+    """A baked plate-style Live2D character in the curated library."""
+
+    id: str = Field(min_length=1)
+    plates_dir: str  # repo-relative dir containing {V}_{open|closed}.png
+    gender: Literal["male", "female"] = "female"
+    age_group: Literal["child", "teen", "adult", "elder"] = "teen"
+    note: str | None = None
+
+
+class Live2DLibrary(BaseModel):
+    models: list[Live2DModel]
+
+    def get(self, model_id: str) -> Live2DModel:
+        for model in self.models:
+            if model.id == model_id:
+                return model
+        raise KeyError(f"live2d model {model_id!r} not in library")

@@ -1,0 +1,12 @@
+{
+  "x": {},
+  "eyeblink": {"eyeBlinkLeft": 1.0, "eyeBlinkRight": 1.0},
+  "a": {"aa": 0.9, "jawOpen": 0.35},
+  "b": {"PP": 0.9, "jawOpen": 0.15},
+  "c": {"DD": 0.8, "SS": 0.3, "jawOpen": 0.15},
+  "d": {"TH": 0.8, "DD": 0.3, "jawOpen": 0.15},
+  "e": {"E": 0.9, "jawOpen": 0.2},
+  "f": {"FF": 0.9, "jawOpen": 0.1},
+  "g": {"kk": 0.9, "jawOpen": 0.3},
+  "h": {"ih": 0.9, "jawOpen": 0.2}
+}

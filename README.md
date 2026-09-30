@@ -314,7 +314,8 @@ parcours d'envoi, aperçu, édition, export, sur **paysage et portrait**.
 ### 6.1 Prérequis
 
 - **Python 3.10+**
-- **FFmpeg** (fourni dans `tools/ffmpeg/`)
+- **FFmpeg** — téléchargé par le script ci-dessous, ou déjà présent dans le `PATH`
+- **Rhubarb Lip Sync** — pour la chaîne 3D uniquement ; téléchargé par le script
 - **Chrome ou Edge** pour l'export (l'API d'enregistrement vidéo n'existe que
   sur les navigateurs Chromium)
 - ~8 Go d'espace disque pour les modèles
@@ -322,11 +323,24 @@ parcours d'envoi, aperçu, édition, export, sur **paysage et portrait**.
 ### 6.2 Installation
 
 ```bash
+# 1. Dépendances Python
 python -m pip install -r requirements.txt
+
+# 2. Binaires tiers (FFmpeg + Rhubarb, ~160 Mo)
+powershell -ExecutionPolicy Bypass -File tools/fetch-dependencies.ps1
 ```
+
+> **Pourquoi les binaires ne sont-ils pas dans le dépôt ?**
+> FFmpeg (80 Mo) et Rhubarb (80 Mo) sont des exécutables tiers, pas du code
+> source. Les inclure ferait passer chaque clone de ~700 Mo à plus de 3 Go, et
+> GitHub refuse tout fichier dépassant 100 Mo. Le script ci-dessus les récupère
+> en une commande. Les modèles 3D (`assets/`, ~1 Go) suivent la même logique.
 
 Les modèles (`faster-whisper-small`, `pyannote`) sont téléchargés au premier
 usage et mis en cache localement.
+
+> **Pour lire et tester le code, rien de tout cela n'est nécessaire** : la suite
+> de tests passe sans aucun de ces binaires.
 
 ### 6.3 Lancement
 

@@ -28,6 +28,10 @@ Rules:
 - One line per transcript segment; keep every segment.
 - Map each distinct speaker (SPEAKER_XX) to a character with a short role name
   inferred from the dialogue (e.g. mother, father, child, friend).
+- For every character infer `gender` (male/female/unknown) and `age_group`
+  (child/teen/adult/elder/unknown) from the dialogue cues (how others address
+  them, pronouns, family role, school/job references). Use "unknown" only when
+  the dialogue gives no clue.
 - Assign each line an emotion from the closed set:
   neutral, happy, sad, angry, surprised, worried, excited, annoyed.
 - Infer a single `setting` from the closed set:

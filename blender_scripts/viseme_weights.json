@@ -1,5 +1,6 @@
 {
   "x": {},
+  "eyeblink": {"eyeBlinkLeft": 1.0, "eyeBlinkRight": 1.0},
   "a": {"jawOpen": 1.0, "mouthOpen": 0.4, "v__M_AA___": 1.0},
   "b": {"mouthPress": 0.8, "mouthClose": 0.9, "v__M_BMP___": 1.0},
   "c": {"jawOpen": 0.35, "mouthStretch": 0.7, "v__M_IH___": 1.0},
