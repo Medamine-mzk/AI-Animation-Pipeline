@@ -14,8 +14,19 @@
 <div class="max-w-6xl mx-auto px-4 pb-2">
 <div class="glass rounded-xl p-3 text-sm">
 <div class="font-semibold">Upload audio (.wav/.mp3) — WhisperX transcribe + diarization → editable dialogue</div>
-<div class="flex items-center gap-3 flex-wrap mt-2">
-<input type="file" id="wavUp" accept=".wav,.mp3">
+<!-- Drag-drop zone + click to browse, with progress + abort -->
+<div id="dropZone" class="mt-3 border-2 border-dashed border-white/15 bg-black/20 rounded-xl p-6 text-center cursor-pointer hover:border-violet-500/50 hover:bg-violet-600/10 transition">
+  <div class="text-2xl mb-1">🎙️</div>
+  <div class="font-semibold text-sm">Drop .wav/.mp3 here or <span class="text-violet-400 underline">click to browse</span></div>
+  <div class="text-xs text-white/40 mt-1">Drag & drop or click — WhisperX will transcribe → diarization → visemes → dialogue</div>
+  <input type="file" id="wavUp" accept=".wav,.mp3" class="hidden">
+  <div id="uploadProgress" class="hidden mt-4 text-left">
+    <div class="flex justify-between text-xs mb-1"><span id="progressText" class="text-white/60">0%</span><button id="abortBtn" class="px-2 py-0.5 bg-red-600/60 hover:bg-red-600 rounded text-xs">✕ Abort</button></div>
+    <div class="w-full bg-black/30 rounded-full h-2 overflow-hidden"><div id="progressBar" class="bg-violet-600 h-2 rounded-full transition-all" style="width:0%"></div></div>
+    <div id="progressFile" class="text-xs text-white/30 mt-1 truncate"></div>
+  </div>
+</div>
+<div class="flex items-center gap-3 flex-wrap mt-3">
 <label class="text-xs flex items-center gap-1">Expected speakers:
 <select id="expectedSpeakers" class="bg-black/30 rounded px-2 py-1 text-xs">
 <option value="">Auto</option>
@@ -30,7 +41,7 @@
 <span class="text-xs text-white/50">hint for diarization — Auto lets WhisperX decide</span>
 </div>
 <button id="useLondon" class="mt-3 px-4 py-2 bg-white/10 rounded-lg text-sm">▶ Use default London dialogue instead</button>
-<div id="wavStatus" class="text-xs text-white/60 mt-2"></div>
+<div id="wavStatus" class="text-xs mt-2 min-h-[1rem] break-words text-white/60"></div>
 </div>
 </div>
 <main class="max-w-6xl mx-auto px-4 pb-12 grid lg:grid-cols-3 gap-6">
@@ -249,16 +260,38 @@ async function refreshSpeakersPanel(){
   hdr.className='text-xs text-violet-300 mb-1';
   hdr.textContent= targetJob ? 'Editing wav job '+targetJob+' ('+Object.keys(targetSpeakers).length+' speakers) - centered' : 'Speakers - centered';
   sEl.appendChild(hdr);
+  // build name candidates from dialogue segments (capitalized words like Chris) + existing speaker names
+  let nameCandidates=[];
+  try{
+    let segs=[];
+    if(targetJob){
+      const r2=await fetch('jobs/'+targetJob+'/dialogue.json?t='+Date.now(),{cache:'no-store'});
+      if(r2.ok){ const jd=await r2.json(); segs=jd.segments||[]; }
+    } else if(data && data.segments){ segs=data.segments; }
+    const set=new Set();
+    const stop=new Set(['What','Are','You','Doing','Surfing','Looking','Information','About','English','Secondary','Schools','Thank','Such','Nice','Friend','Come','Have','Look','There','Lot','Probably','Much','Should','Select','Need','Hello','Hi','Yes','No','The','And','But','For','With','From']);
+    // existing names
+    Object.values(targetSpeakers).forEach(c=>{ if(c.name) set.add(c.name); });
+    for(const seg of segs){
+      const txt=seg.text||'';
+      const words=txt.match(/\b[A-Z][a-z]{2,}\b/g)||[];
+      words.forEach(w=>{ if(!stop.has(w)) set.add(w); });
+    }
+    nameCandidates=[...set].slice(0,16);
+    if(!nameCandidates.length) nameCandidates=['Chris','Alex','Jordan','Sam','Taylor'];
+  } catch(e){ nameCandidates=['Chris','Alex','Jordan']; }
   for(const [id,cfg] of Object.entries(targetSpeakers)){
     const d=document.createElement('div'); d.className='glass rounded-lg p-2 text-xs flex flex-col gap-1';
     const pos=cfg.position?`${cfg.position.x.toFixed(2)},${cfg.position.z.toFixed(2)}`:'auto centered';
     const gender=cfg.body || (cfg.avatarUrl && cfg.avatarUrl.includes('woman') ? 'F' : 'M');
+    const opts=nameCandidates.map(n=>`<option value="${n}">`).join('');
     d.innerHTML=`<div class="flex justify-between items-center"><span class="font-semibold">${id} — ${cfg.name||id}</span><span class="text-white/40 text-xs">${cfg.body||gender} • ${pos}</span></div>
+      <label class="text-xs flex items-center gap-1">Name <input data-speaker="${id}" class="nameInputWav flex-1 bg-black/30 rounded px-1 py-1 text-xs" value="${cfg.name||''}" list="names-${id}" placeholder="e.g. Chris"><datalist id="names-${id}">${opts}</datalist></label>
       <div class="flex gap-2">
         <label class="text-xs flex-1 flex items-center gap-1">Avatar <select data-speaker="${id}" class="avatarSelectWav flex-1 bg-black/30 rounded px-1 py-1 text-xs">${avatarList.map(f=>`<option value="assets/${f}" ${cfg.avatarUrl===`assets/${f}`?'selected':''}>${f}</option>`).join('')}</select></label>
         <label class="text-xs flex items-center gap-1">Gender <select data-speaker="${id}" class="genderSelectWav w-16 bg-black/30 rounded px-1 py-1 text-xs"><option value="F" ${gender==='F'?'selected':''}>F</option><option value="M" ${gender==='M'?'selected':''}>M</option></select></label>
       </div>
-      <div class="text-white/30 text-xs">centered • ${cfg.lipsyncLang||'en'} • auto-detected, editable</div>`;
+      <div class="text-white/30 text-xs">centered • ${cfg.lipsyncLang||'en'} • name from dialogue or type custom</div>`;
     sEl.appendChild(d);
   }
   sEl.querySelectorAll('.avatarSelectWav').forEach(sel=>{
@@ -331,6 +364,38 @@ async function refreshSpeakersPanel(){
         }
       }catch(err){ statusEl.textContent='Gender save failed: '+err.message; statusEl.className='text-xs mt-1 min-h-[1rem] break-words text-red-400'; setTimeout(()=>refreshSpeakersPanel(), 800); }
     };
+  });
+  // name editable: from dialogue candidates or free input
+  sEl.querySelectorAll('.nameInputWav').forEach(inp=>{
+    const sid=inp.dataset.speaker;
+    let saveTimer=null;
+    const saveName=async ()=>{
+      const newName=inp.value.trim();
+      if(!newName){ document.getElementById('projectStatus').textContent='Name cannot be empty'; return; }
+      const jobId=targetJob||currentJobId;
+      if(!jobId) return;
+      const statusEl=document.getElementById('projectStatus');
+      statusEl.textContent='Saving name '+sid+' → '+newName+'...';
+      statusEl.className='text-xs mt-1 min-h-[1rem] break-words text-amber-300';
+      try{
+        const r=await fetch('jobs/'+jobId+'/dialogue.json?t='+Date.now(),{cache:'no-store'}); if(!r.ok) throw new Error('fetch '+r.status);
+        const j=await r.json();
+        if(j.speakers && j.speakers[sid]){
+          j.speakers[sid].name=newName;
+          const put=await fetch('api/jobs/'+jobId+'/dialogue',{method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({segments:j.segments, speakers:j.speakers})});
+          if(!put.ok){ const t=await put.text(); throw new Error(t.slice(0,120)); }
+          statusEl.textContent='✓ Name for '+sid+' → '+newName+' saved — hard refresh player to see label';
+          statusEl.className='text-xs mt-1 min-h-[1rem] break-words text-emerald-400';
+          targetSpeakers[sid].name=newName;
+          // update header without full refresh
+          const hdr=sEl.querySelector('div');
+          if(hdr) hdr.textContent='Editing wav job '+jobId+' ('+Object.keys(targetSpeakers).length+' speakers) - centered';
+        }
+      }catch(err){ statusEl.textContent='Name save failed: '+err.message; statusEl.className='text-xs mt-1 min-h-[1rem] break-words text-red-400'; }
+    };
+    inp.addEventListener('change', saveName);
+    inp.addEventListener('blur', saveName);
+    inp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); saveName(); inp.blur(); }});
   });
 }
 function renderWavResult(jobId) {
@@ -636,15 +701,37 @@ async function render() {
       }
     }catch(e){}
   }
+  // name candidates from dialogue text (e.g. Chris) + existing names
+  let nameCands=[];
+  try{
+    const segs = (targetJobId && data && data.segments) ? data.segments : (data.segments||[]);
+    // if wav job, try fetch its segments for richer names
+    let candidateSegs=segs;
+    if(targetJobId){
+      try{ const rr=await fetch('jobs/'+targetJobId+'/dialogue.json?t='+Date.now(),{cache:'no-store'}); if(rr.ok){ const jj=await rr.json(); if(jj.segments) candidateSegs=jj.segments; } }catch(e){}
+    }
+    const set=new Set();
+    Object.values(targetSpeakers).forEach(c=>{ if(c.name) set.add(c.name); });
+    const stop=new Set(['What','Are','You','Doing','Surfing','Looking','Information','About','English','Secondary','Schools','Thank','Such','Nice','Friend','Come','Have','Look','There','Lot','Probably','Much','Should','Select','Need','Hello','Hi','Yes','No','The','And','But','For','With','From']);
+    for(const seg of candidateSegs){
+      const txt=seg.text||'';
+      const words=txt.match(/\b[A-Z][a-z]{2,}\b/g)||[];
+      words.forEach(w=>{ if(!stop.has(w)) set.add(w); });
+    }
+    nameCands=[...set].slice(0,16);
+    if(!nameCands.length) nameCands=['Chris','Alex','Jordan','Sam'];
+  } catch(e){ nameCands=['Chris','Alex','Jordan']; }
   for(const [id, cfg] of Object.entries(targetSpeakers)){
     const d = document.createElement('div'); d.className = 'glass rounded-lg p-2 text-xs flex flex-col gap-1';
     const pos = cfg.position ? `${cfg.position.x.toFixed(2)},${cfg.position.z.toFixed(2)}` : 'auto centered';
     const gender = cfg.body || (cfg.avatarUrl && cfg.avatarUrl.includes('woman') ? 'F' : 'M');
+    const opts=nameCands.map(n=>`<option value="${n}">`).join('');
     d.innerHTML = `
       <div class="flex justify-between items-center">
         <span class="font-semibold">${id} — ${cfg.name||id}</span>
         <span class="text-white/40 text-xs">${cfg.body||gender} • ${pos}</span>
       </div>
+      <label class="text-xs flex items-center gap-1">Name <input data-speaker="${id}" class="nameInput flex-1 bg-black/30 rounded px-1 py-1 text-xs" value="${cfg.name||''}" list="names2-${id}" placeholder="e.g. Chris"><datalist id="names2-${id}">${opts}</datalist></label>
       <div class="flex gap-2">
         <label class="text-xs flex-1 flex items-center gap-1">Avatar
           <select data-speaker="${id}" class="avatarSelect flex-1 bg-black/30 rounded px-1 py-1 text-xs">
@@ -658,7 +745,7 @@ async function render() {
           </select>
         </label>
       </div>
-      <div class="text-white/30 text-xs">centered • ${cfg.lipsyncLang||'en'} • auto-detected via pitch, editable</div>
+      <div class="text-white/30 text-xs">centered • ${cfg.lipsyncLang||'en'} • name from dialogue or type custom</div>
     `;
     s.appendChild(d);
   }
@@ -762,6 +849,37 @@ async function render() {
       }
     };
   });
+  s.querySelectorAll('.nameInput').forEach(inp=>{
+    const sid=inp.dataset.speaker;
+    const saveName=async ()=>{
+      const newName=inp.value.trim();
+      if(!newName){ document.getElementById('projectStatus').textContent='Name cannot be empty'; return; }
+      let tgtJob=targetJobId;
+      if(tgtJob){
+        try{
+          const r=await fetch('jobs/'+tgtJob+'/dialogue.json?t='+Date.now(),{cache:'no-store'}); if(!r.ok) throw new Error('fetch '+r.status);
+          const j=await r.json();
+          if(j.speakers && j.speakers[sid]){
+            j.speakers[sid].name=newName;
+            await fetch('api/jobs/'+tgtJob+'/dialogue',{method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({segments:j.segments, speakers:j.speakers})});
+            document.getElementById('projectStatus').textContent='✓ Name for '+sid+' → '+newName+' saved';
+            document.getElementById('projectStatus').className='text-xs mt-1 min-h-[1rem] break-words text-emerald-400';
+            targetSpeakers[sid].name=newName;
+          }
+        }catch(err){ document.getElementById('projectStatus').textContent='Name save failed: '+err.message; }
+      } else {
+        if(data.speakers[sid]){
+          data.speakers[sid].name=newName;
+          scheduleAutoSave();
+          document.getElementById('projectStatus').textContent='✓ Name for '+sid+' → '+newName+' (auto-saved)';
+          document.getElementById('projectStatus').className='text-xs mt-1 min-h-[1rem] break-words text-emerald-400';
+        }
+      }
+    };
+    inp.addEventListener('change', saveName);
+    inp.addEventListener('blur', saveName);
+    inp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); saveName(); inp.blur(); }});
+  });
   document.getElementById('emoTop').textContent = Object.values(lineEmo || {})[0]?.top || '-';
   c.addEventListener('input', e => {
     const i = e.target.dataset.i, k = e.target.dataset.k;
@@ -795,7 +913,7 @@ document.getElementById('previewBtn').onclick = () => {
 
 async function initWavUpload() {
   const c = document.getElementById('lines');
-  c.innerHTML = '<div class="glass rounded-xl p-4 text-sm text-white/60">Select a .wav/.mp3 via the toolbar above — WhisperX transcribe + diarization updates this panel.</div>';
+  c.innerHTML = '<div class="glass rounded-xl p-4 text-sm text-white/60">Select a .wav/.mp3 via the drag-drop zone above — WhisperX transcribe + diarization updates this panel.<br><span class="text-xs text-white/40">Or drag & drop audio directly onto the dashed zone.</span></div>';
   
   document.getElementById('useLondon').onclick = () => {
     localStorage.removeItem('wav_job_id');
@@ -805,49 +923,115 @@ async function initWavUpload() {
   
   const inp = document.getElementById('wavUp');
   const expSel = document.getElementById('expectedSpeakers');
+  const dropZone = document.getElementById('dropZone');
+  const progressWrap = document.getElementById('uploadProgress');
+  const progressBar = document.getElementById('progressBar');
+  const progressText = document.getElementById('progressText');
+  const progressFile = document.getElementById('progressFile');
+  const abortBtn = document.getElementById('abortBtn');
+  let currentXhr = null;
+  let isUploading = false;
   if (expSel) { try { const v = localStorage.getItem('expected_speakers'); if (v) expSel.value = v; } catch(e){} expSel.onchange = () => { try { localStorage.setItem('expected_speakers', expSel.value); } catch(e){} }; }
-  inp.onchange = async (e) => {
-    const f = e.target.files[0]; if (!f) return;
+  // click zone -> file picker
+  if (dropZone && inp) {
+    dropZone.addEventListener('click', (e)=>{ if(e.target.closest('#abortBtn')||e.target.closest('#uploadProgress')) return; if(!isUploading) inp.click(); });
+    dropZone.addEventListener('dragover', (e)=>{ e.preventDefault(); dropZone.classList.add('border-violet-500','bg-violet-600/20'); });
+    dropZone.addEventListener('dragleave', (e)=>{ dropZone.classList.remove('border-violet-500','bg-violet-600/20'); });
+    dropZone.addEventListener('drop', (e)=>{
+      e.preventDefault(); dropZone.classList.remove('border-violet-500','bg-violet-600/20');
+      const f=e.dataTransfer.files[0]; if(f) handleFile(f);
+    });
+  }
+  if (abortBtn) abortBtn.onclick = (e)=>{ e.stopPropagation(); if(currentXhr){ try{ currentXhr.abort(); }catch(e){} currentXhr=null; isUploading=false; if(progressWrap) progressWrap.classList.add('hidden'); document.getElementById('wavStatus').textContent='Upload aborted by user.'; document.getElementById('wavStatus').className='text-xs mt-2 min-h-[1rem] break-words text-amber-300'; }};
+  function showProgress(fileName, pct){
+    if(!progressWrap) return;
+    progressWrap.classList.remove('hidden');
+    if(progressBar) progressBar.style.width=pct+'%';
+    if(progressText) progressText.textContent=pct+'%';
+    if(progressFile) progressFile.textContent=fileName;
+  }
+  function hideProgress(){ if(progressWrap) progressWrap.classList.add('hidden'); if(progressBar) progressBar.style.width='0%'; }
+  async function handleFile(f){
+    if(!f) return;
+    // validate extension
+    const okExt = /\.(wav|mp3)$/i.test(f.name) || f.type.startsWith('audio/');
+    if(!okExt){ document.getElementById('wavStatus').textContent='Invalid file: '+f.name+' — please use .wav or .mp3'; document.getElementById('wavStatus').className='text-xs mt-2 min-h-[1rem] break-words text-red-400'; return; }
+    if(f.size> 200*1024*1024){ document.getElementById('wavStatus').textContent='File too large: '+(f.size/1e6).toFixed(1)+'MB — max 200MB'; document.getElementById('wavStatus').className='text-xs mt-2 min-h-[1rem] break-words text-red-400'; return; }
     const exp = document.getElementById('expectedSpeakers')?.value || '';
     if (exp) try { localStorage.setItem('expected_speakers', exp); } catch(e){}
     document.getElementById('wavStatus').textContent = `Uploading ${f.name} ${(f.size / 1e6).toFixed(1)}MB ${exp ? '(expect '+exp+' speakers) ' : ''}→ POST /api/jobs...`;
+    document.getElementById('wavStatus').className='text-xs mt-2 min-h-[1rem] break-words text-white/60';
+    showProgress(f.name, 0);
+    isUploading=true;
     try {
-      const headers = {'X-Filename': f.name, 'Content-Type': 'application/octet-stream'};
-      if (exp) headers['X-Expected-Speakers'] = exp;
-      const r = await fetch('/api/jobs', {method: 'POST', body: f, headers});
-      const j = await r.json();
+      const xhr = new XMLHttpRequest();
+      currentXhr=xhr;
+      xhr.open('POST','/api/jobs', true);
+      xhr.setRequestHeader('X-Filename', f.name);
+      xhr.setRequestHeader('Content-Type','application/octet-stream');
+      if(exp) xhr.setRequestHeader('X-Expected-Speakers', exp);
+      xhr.upload.onprogress = (e)=>{ if(e.lengthComputable){ const pct=Math.round(e.loaded/e.total*100); showProgress(f.name, pct); document.getElementById('wavStatus').textContent=`Uploading ${f.name} ${pct}% ${(f.size/1e6).toFixed(1)}MB...`; } };
+      const done = await new Promise((resolve, reject)=>{
+        xhr.onload = ()=>{ if(xhr.status>=200 && xhr.status<300){ try{ resolve(JSON.parse(xhr.responseText)); }catch(e){ reject(new Error('Invalid JSON '+xhr.responseText.slice(0,120))); } } else { reject(new Error('HTTP '+xhr.status+' '+xhr.responseText.slice(0,200))); } };
+        xhr.onerror = ()=> reject(new Error('Network error'));
+        xhr.onabort = ()=> reject(new Error('Aborted'));
+        xhr.send(f);
+      });
+      hideProgress(); isUploading=false; currentXhr=null;
+      const j=done;
       document.getElementById('wavStatus').textContent = `Job ${j.job_id} queued — polling status...`;
+      document.getElementById('wavStatus').className='text-xs mt-2 min-h-[1rem] break-words text-violet-300';
       pollStatus(j.job_id);
     } catch (err) {
-      document.getElementById('wavStatus').textContent = 'Upload failed: ' + err.message + ' — will use localStorage fallback';
-      localStorage.setItem('wav_file', f.name);
+      hideProgress(); isUploading=false; currentXhr=null;
+      if(err.message==='Aborted'){ /* already handled */ return; }
+      document.getElementById('wavStatus').textContent = 'Upload failed: ' + err.message;
+      document.getElementById('wavStatus').className='text-xs mt-2 min-h-[1rem] break-words text-red-400';
+      // honest fetch if job created
     }
+  }
+  inp.onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    await handleFile(f);
+    // reset input so same file can be re-selected
+    e.target.value='';
   };
   
   async function pollStatus(jobId) {
     const el = document.getElementById('wavStatus');
-    for (let i = 0; i < 60; i++) {
+    for (let i = 0; i < 90; i++) {
       await new Promise(r => setTimeout(r, 2000));
       try {
         const r = await fetch('/api/jobs/' + jobId);
         const s = await r.json();
         if (s.status === 'done') {
-          el.textContent = `Job ${jobId} done — dialogue ready`;
+          el.textContent = `✓ Job ${jobId} done — dialogue ready (${s.segments||'?'} segs)`;
+          el.className='text-xs mt-2 min-h-[1rem] break-words text-emerald-400';
           localStorage.setItem('wav_job_id', jobId);
           await renderJobLines(jobId, c);
+          fetchProjects(); refreshSpeakersPanel();
           return;
         } else if (s.status === 'failed') {
-          el.textContent = 'Job failed: ' + (s.error || 'unknown');
+          // honest failed: fetch meta.json for transcript_failed reason
+          let honest='';
+          try{ const mr=await fetch('jobs/'+jobId+'/meta.json?t='+Date.now(),{cache:'no-store'}); if(mr.ok){ const mf=await mr.json(); if(mf.transcript_failed){ honest = ` — honest: WhisperX could not transcribe (${(mf.reason||'').slice(0,180)}), source: ${mf.transcript_source||'none'} — dialogue empty, not your recording`; } } }catch(e){}
+          el.innerHTML = `<span class="text-red-400 font-semibold">✕ Job failed: ${s.error||'unknown'}</span><span class="text-amber-200">${honest}</span><br><span class="text-white/40 text-xs">Check jobs/${jobId}/meta.json • try a louder/clearer clip or Use default London</span>`;
+          el.className='text-xs mt-2 min-h-[1rem] break-words border border-red-500/30 bg-red-500/10 rounded p-2';
+          // also show honest banner in wavResult if any
+          try{ await renderJobLines(jobId, c); }catch(e){}
           return;
         } else {
           el.textContent = 'Status: ' + s.status + '... ' + stagePct(s) + '%';
+          el.className='text-xs mt-2 min-h-[1rem] break-words text-white/60';
         }
       } catch (e) {
         el.textContent = 'Poll error: ' + e.message;
+        el.className='text-xs mt-2 min-h-[1rem] break-words text-red-400';
         return;
       }
     }
     el.textContent = 'Polling timeout — check jobs/' + jobId;
+    el.className='text-xs mt-2 min-h-[1rem] break-words text-amber-300';
   }
   
   document.getElementById('addLine').style.display = 'none';
