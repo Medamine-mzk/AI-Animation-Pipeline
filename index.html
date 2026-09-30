@@ -47,10 +47,38 @@ h1,h2{font-family:'Space Grotesk',sans-serif}
 <div class="mt-4 text-xs text-amber-300">Prompt → 4-person family</div>
 </a>
 </div>
-<div class="mt-8 glass rounded-2xl p-4 flex justify-between items-center text-sm">
-<span class="text-white/60">Current: Horsleygate Hall 4K Fitted • Green 10m • Very small 0.3 • Hybrid eye-level</span>
-<a href="dialogue-player.html" class="px-4 py-2 bg-white text-black rounded-lg font-semibold">→ Player (Page 3)</a>
-</div>
-</main>
+    <div class="mt-8 glass rounded-2xl p-4 flex justify-between items-center text-sm">
+      <span class="text-white/60">Current: Horsleygate Hall 4K Fitted • Green 10m • Very small 0.3 • Hybrid eye-level</span>
+      <a href="dialogue-player.html" class="px-4 py-2 bg-white text-black rounded-lg font-semibold">→ Player (Page 3)</a>
+    </div>
+
+    <!-- Captions feature. A separate section, not a fourth peer card, because it
+         is a different job: it takes a video and gives back the same video with
+         captions burned in, and it does not use the 3D avatar stage at all. -->
+    <div class="mt-14 pt-10 border-t border-white/10">
+      <div class="flex items-baseline gap-3 mb-2 flex-wrap">
+        <span class="px-2 py-0.5 rounded-full bg-emerald-500/20 border border-emerald-400/40 text-emerald-300 text-[11px] font-semibold tracking-wide">NEW</span>
+        <h2 class="text-2xl font-bold">Video Captions</h2>
+      </div>
+      <p class="text-white/60 text-sm mb-6 max-w-2xl">
+        A different kind of output. Upload a short video and get it back with
+        animated, word-by-word captions burned in — grouped by speaker and
+        colour-coded, the way language-teaching clips usually need.
+      </p>
+      <a href="captions.html" class="bento glass rounded-2xl p-6 cursor-pointer group block max-w-2xl">
+        <div class="w-12 h-12 rounded-xl bg-gradient-to-br from-emerald-500 to-teal-500 flex items-center justify-center text-xl">🎬</div>
+        <h3 class="mt-4 text-lg font-semibold">Burned-in Captions</h3>
+        <p class="text-sm text-white/60 mt-2">
+          WhisperX transcribes with real word-level timing, so the current word
+          highlights as it is spoken. Edit any misheard word before exporting the mp4.
+        </p>
+        <div class="mt-4 text-xs text-emerald-300">mp4 / mov / webm, or a direct video link → export mp4</div>
+      </a>
+      <p class="text-xs text-white/35 mt-3 max-w-2xl">
+        No 3D avatars here — this captions your own footage. For audio turned into
+        3D characters, use WAV / MP3 above.
+      </p>
+    </div>
+  </main>
 </body>
 </html>
