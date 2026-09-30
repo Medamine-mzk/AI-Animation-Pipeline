@@ -220,6 +220,16 @@
         </div>
       </div>
       <div id="sourceStatus" style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:8px"></div>
+      <!-- Previously a finished job could only be reached by editing the URL, so
+           a user who made two videos had no way back to the first one. -->
+      <div id="recentCard" hidden style="margin-top:14px;border-top:1px solid rgba(255,255,255,0.1);padding-top:12px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+          <strong style="font-size:12px">Your videos</strong>
+          <button id="recentRefresh" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);
+                  color:#fff;border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer">Refresh</button>
+        </div>
+        <div id="recentList" style="display:flex;flex-direction:column;gap:6px"></div>
+      </div>
     </div>
 
     <div class="stage" id="stage">
@@ -396,6 +406,9 @@ const el = {
   uploadFill: document.getElementById('uploadFill'),
   cancelBtn: document.getElementById('cancelBtn'),
   sourceStatus: document.getElementById('sourceStatus'),
+  recentCard: document.getElementById('recentCard'),
+  recentList: document.getElementById('recentList'),
+  recentRefresh: document.getElementById('recentRefresh'),
   editorCard: document.getElementById('editorCard'),
   transcript: document.getElementById('transcript'),
   nameEditor: document.getElementById('nameEditor'),
@@ -439,6 +452,74 @@ function resetSourceCard() {
   currentXhr = null;
 }
 
+// ---------------------------------------------------------- recent videos
+
+// The only previous way back to an earlier clip was to hand-edit ?job= in the
+// URL, which is not something a user can be expected to do. Lists caption jobs
+// newest first and opens one on click.
+const STATUS_LABEL = {
+  queued: 'Queued', extracting_audio: 'Extracting audio',
+  transcribing: 'Transcribing', aligning_captions: 'Building captions',
+  done: 'Ready', failed: 'Failed',
+};
+
+function recentRow(job) {
+  const row = document.createElement('button');
+  row.type = 'button';
+  row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:8px;'
+    + 'width:100%;text-align:left;background:rgba(255,255,255,0.05);'
+    + 'border:1px solid rgba(255,255,255,0.12);border-radius:8px;padding:7px 9px;'
+    + 'color:#fff;font-size:12px;cursor:pointer';
+  row.setAttribute('aria-label', 'Open ' + (job.originalFilename || job.id));
+
+  const name = job.originalFilename || job.id;
+  const left = document.createElement('span');
+  left.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+  left.textContent = name;
+  left.title = name;
+
+  const bits = [];
+  if (job.durationS) bits.push(Number(job.durationS).toFixed(1) + 's');
+  const status = STATUS_LABEL[job.status] || job.status;
+  const done = job.status === 'done';
+  // `captions` is the summary object from the API, not a count -- reading it
+  // directly printed "[object Object] pages".
+  const pages = job.captions && typeof job.captions === 'object'
+    ? job.captions.pages
+    : job.captions;
+  bits.push(done && typeof pages === 'number' ? pages + ' pages' : status);
+
+  const right = document.createElement('span');
+  right.style.cssText = 'flex:none;font-size:11px;color:'
+    + (job.status === 'failed' ? '#f87171' : done ? 'rgba(255,255,255,0.45)' : '#a78bfa');
+  right.textContent = bits.join(' · ');
+
+  row.appendChild(left);
+  row.appendChild(right);
+  row.onclick = () => { openJob(job.id); refreshRecent(); };
+  return row;
+}
+
+async function refreshRecent() {
+  let jobs = [];
+  try {
+    const r = await fetch('/api/caption-jobs', { cache: 'no-store' });
+    if (r.ok) jobs = await r.json();
+  } catch (e) { return; }
+
+  // Newest first. A job mid-transcription is worth showing, so it is kept and
+  // labelled rather than hidden until it finishes.
+  jobs.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  jobs = jobs.slice(0, 8);
+
+  if (!jobs.length) { el.recentCard.hidden = true; return; }
+  el.recentCard.hidden = false;
+  el.recentList.innerHTML = '';
+  for (const job of jobs) el.recentList.appendChild(recentRow(job));
+}
+
+el.recentRefresh.onclick = () => refreshRecent();
+
 // Poll the job until it finishes, then hand the page its own captions.
 function pollJob(jobId) {
   const STAGES = {
@@ -460,6 +541,9 @@ function pollJob(jobId) {
         setSourceStatus('Captions ready. The preview below is playing your video.', 'ok');
         await openJob(jobId);
         resetSourceCard();
+        // The new job now exists with a page count, so the list is worth
+        // refreshing rather than leaving a stale entry until a reload.
+        refreshRecent();
       } else if (job.status === 'failed') {
         stopPolling();
         resetSourceCard();
@@ -1615,6 +1699,7 @@ el.exportCancel.onclick = () => {
 restoreAppearance();
 state.rafId = requestAnimationFrame(tick);
 loadCaptions();
+refreshRecent();
 
 // Top-level `const` in a classic script lives in the global lexical scope, not
 // on `window`, so nothing here is reachable from devtools automation or a

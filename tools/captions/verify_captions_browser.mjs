@@ -715,6 +715,53 @@ const sized = await page.evaluate(async () => {
           paths.join(', ') || 'none');
   }
 
+  // --- recent videos ----------------------------------------------------
+  // A finished job used to be reachable only by hand-editing ?job=, which is not
+  // something a user can be expected to do. Conditional: a fresh checkout may
+  // genuinely have no caption jobs.
+  const recent = await page.evaluate(() => {
+    const card = document.getElementById('recentCard');
+    const rows = Array.from(document.querySelectorAll('#recentList button'));
+    return {
+      hidden: card.hidden,
+      rows: rows.map((r) => r.textContent.trim()),
+      ids: rows.map((r) => r.getAttribute('aria-label') || ''),
+    };
+  });
+  if (!recent.rows.length) {
+    check('recent videos list (skipped, no caption jobs exist)', recent.hidden,
+          'list hidden with nothing to show');
+  } else {
+    check('recent videos list is shown when jobs exist', !recent.hidden,
+          `${recent.rows.length} rows`);
+    // The API sends the captions summary object, so reading it as a count used
+    // to render "[object Object] pages".
+    check('recent rows show a real duration and page count',
+          recent.rows.every((t) => /\d+(\.\d+)?s · \d+ pages/.test(t)),
+          recent.rows.join(' | '));
+    check('no recent row renders [object Object]',
+          !recent.rows.some((t) => /\[object/.test(t)),
+          recent.rows.join(' | '));
+
+    // Clicking a row must actually open that job.
+    const opened = await page.evaluate(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const rows = Array.from(document.querySelectorAll('#recentList button'));
+      const target = rows[rows.length - 1];
+      const label = target.getAttribute('aria-label') || '';
+      target.click();
+      await sleep(1200);
+      return {
+        label,
+        jobParam: new URLSearchParams(location.search).get('job'),
+        badge: document.getElementById('jobBadge').textContent.trim(),
+      };
+    });
+    check('clicking a recent video opens that job',
+          Boolean(opened.jobParam) && opened.badge === opened.jobParam,
+          `?job=${opened.jobParam}, badge=${opened.badge}`);
+  }
+
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));
 
   await restore();
