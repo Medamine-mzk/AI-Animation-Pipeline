@@ -192,6 +192,38 @@ try {
   check('the mp4 has an mp4 container signature',
         buf.subarray(4, 8).toString('latin1') === 'ftyp',
         `bytes 4-8 = ${JSON.stringify(buf.subarray(4, 8).toString('latin1'))}`);
+
+  // The flow has to end with the video playable in the page, not just a file on
+  // disk. Wait for the player to actually decode, so a broken src cannot pass by
+  // merely being non-empty.
+  const shown = await page.evaluate(async () => {
+    const player = document.getElementById('exportPlayer');
+    const box = document.getElementById('exportResult');
+    const link = document.getElementById('exportLink');
+    if (!player || box.hidden || link.hidden) {
+      return { shown: false, why: 'result hidden', src: player ? player.src : null };
+    }
+    if (player.readyState < 1) {
+      await new Promise((res) => {
+        const done = () => res();
+        player.addEventListener('loadedmetadata', done, { once: true });
+        setTimeout(done, 8000);
+      });
+    }
+    return {
+      shown: true,
+      src: player.src,
+      w: player.videoWidth,
+      h: player.videoHeight,
+      duration: player.duration,
+      download: link.getAttribute('download'),
+    };
+  });
+  check('the finished video plays in the page',
+        shown.shown && shown.w > 0 && shown.h > 0,
+        shown.shown
+          ? `${shown.w}x${shown.h}, ${shown.duration.toFixed(1)}s, download=${JSON.stringify(shown.download)}`
+          : shown.why);
 } catch (e) {
   check('the export harness ran to completion', false, e.message);
 }

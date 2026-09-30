@@ -388,13 +388,16 @@ try {
       // Edit the first word and confirm the preview shows the new text.
       const first = document.querySelector('.wi');
       out.before = first.value;
+      // Captured BEFORE the edit. This is the model's initial value, and the
+      // check below compares it against the input's initial value; reading it
+      // afterwards returned 'CORRECTED' and the comparison could never pass.
+      out.modelFirst = captionsApp.state.captions.pages[0].words[0].text;
       first.value = 'CORRECTED';
       first.dispatchEvent(new Event('input', { bubbles: true }));
       await sleep(150);
       out.spanText = document.querySelector('#words .w')
         ? document.querySelector('#words .w').textContent : null;
       out.modelText = captionsApp.state.captions.pages[0].words[0].text;
-      out.modelFirst = captionsApp.state.captions.pages[0].words[0].text;
       out.saveState = document.getElementById('editState').textContent;
       return out;
     });
@@ -470,10 +473,49 @@ try {
     check('a renamed speaker appears in the caption tag',
           /Professor Adams/.test(renamed.tag), JSON.stringify(renamed.tag));
   } else {
+    // editorCard is toggled through the `hidden` property
+    // (captions.html sets el.editorCard.hidden), so reading classList reported a
+    // correctly hidden editor as visible. Accept either mechanism.
     check('editor hidden on the demo (nothing to persist to)',
-          await page.evaluate(() =>
-            document.getElementById('editorCard').classList.contains('hidden')));
+          await page.evaluate(() => {
+            const c = document.getElementById('editorCard');
+            return c.hidden || c.classList.contains('hidden');
+          }));
   }
+
+  // The speaker name is an editorial label, not part of the video, so it must
+  // not be rendered unless explicitly asked for. Asserted on the live tag
+  // element because that is exactly what drawCaptionOnCanvas consults -- a
+  // CSS-only change would leave the export still drawing the name.
+  const tagToggle = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const tag = document.getElementById('tag');
+    const cb = document.getElementById('showSpeaker');
+    // Park inside a caption page first: with no page drawn there is no tag to
+    // show and the toggle would look broken.
+    const p0 = captionsApp.state.captions.pages[0];
+    const t = (p0.words[0].startMs + p0.words[0].endMs) / 2;
+    const v = document.getElementById('video');
+    if (captionsApp.state.hasVideo) { v.currentTime = t / 1000; } else { captionsApp.state.timeMs = t; }
+    await sleep(200);
+    const drawn = document.getElementById('plate').classList.contains('visible');
+    const before = { checked: cb.checked, hidden: tag.hidden };
+    cb.checked = true;
+    cb.dispatchEvent(new Event('change'));
+    await sleep(150);
+    const on = tag.hidden;
+    cb.checked = false;
+    cb.dispatchEvent(new Event('change'));
+    await sleep(150);
+    return { drawn, before, on, off: tag.hidden };
+  });
+  check('a caption page is on screen to test the tag against', tagToggle.drawn);
+  check('the speaker name is not rendered by default',
+        tagToggle.before.checked === false && tagToggle.before.hidden === true,
+        `checked=${tagToggle.before.checked}, tag hidden=${tagToggle.before.hidden}`);
+  check('the speaker-name toggle drives the rendered tag',
+        tagToggle.on === false && tagToggle.off === true,
+        `on -> hidden=${tagToggle.on}, off -> hidden=${tagToggle.off}`);
 
   // --- 2 lines at the largest size ------------------------------------
   const overflow = await page.evaluate(() => {

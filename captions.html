@@ -268,6 +268,12 @@
       </div>
       <label class="toggle"><input type="checkbox" id="reducedMotion"> Reduced motion</label>
       <label class="toggle"><input type="checkbox" id="highContrast"> High contrast</label>
+      <label class="toggle"><input type="checkbox" id="showSpeaker"> Speaker name in the video</label>
+      <p class="text-xs" style="color:rgba(255,255,255,0.4);line-height:1.5;margin:4px 0 0">
+        Off by default: the name is an editorial label, and burning it in puts
+        &ldquo;Speaker 1&rdquo; on the finished video. This switches the preview and
+        the export together, so what you see is what gets rendered.
+      </p>
     </div>
 
     <div class="card glass">
@@ -310,11 +316,21 @@
           <div id="exportFill" style="background:#059669;height:100%;width:0%;transition:width .25s"></div>
         </div>
       </div>
-      <a id="exportLink" hidden
+      <a id="exportLink" hidden download
          style="display:block;margin-top:10px;text-align:center;padding:9px;border-radius:8px;
                 background:#059669;color:#fff;font-size:13px;font-weight:600;text-decoration:none">
         &#11015; Download the mp4
       </a>
+      <!-- The finished video, playable in place. A download link alone left the
+           user with no way to check the render before saving it. -->
+      <div id="exportResult" hidden style="margin-top:12px">
+        <video id="exportPlayer" controls playsinline preload="metadata"
+               style="display:block;width:100%;border-radius:8px;background:#000"></video>
+        <p class="text-xs" style="color:rgba(255,255,255,0.45);margin-top:8px;line-height:1.5">
+          This is the file that was saved. Watch it here, or download it with
+          the button above.
+        </p>
+      </div>
       <div id="exportError" class="note err hidden" style="margin-top:10px"></div>
     </div>
   </aside>
@@ -335,6 +351,7 @@ const state = {
   pageSpans: [],
   video: null,
   hasVideo: false,
+  showSpeaker: false,
   mediaDurationMs: 0,
   job: null,
   rafId: null,
@@ -363,6 +380,7 @@ const el = {
   pos: document.getElementById('pos'),
   reducedMotion: document.getElementById('reducedMotion'),
   highContrast: document.getElementById('highContrast'),
+  showSpeaker: document.getElementById('showSpeaker'),
   dropZone: document.getElementById('dropZone'),
   fileInput: document.getElementById('fileInput'),
   urlInput: document.getElementById('urlInput'),
@@ -383,6 +401,8 @@ const el = {
   exportFill: document.getElementById('exportFill'),
   exportCancel: document.getElementById('exportCancel'),
   exportLink: document.getElementById('exportLink'),
+  exportResult: document.getElementById('exportResult'),
+  exportPlayer: document.getElementById('exportPlayer'),
   exportError: document.getElementById('exportError'),
 };
 
@@ -709,6 +729,11 @@ async function maybeLoadVideo(job, forced) {
           state.mediaDurationMs = mediaMs;
           // The export panel only makes sense once there is a real video.
           el.exportCard.hidden = false;
+          // renderEditor() runs before the media has metadata, so its refresh of
+          // any existing export is skipped there. Repeat it once a video is
+          // actually available, otherwise reopening a rendered job shows an
+          // empty export panel even though the mp4 exists on disk.
+          if (state.job) refreshExportUi(state.job);
           if (state.captions && mediaMs < state.captions.durationMs) {
             // Honest mismatch reporting, shown alongside the provenance rather
             // than replacing it: both facts matter, and truncating silently
@@ -763,7 +788,7 @@ function drawPage(page) {
   el.plate.style.setProperty('--speaker-color', style.color);
   el.plate.style.setProperty('--active-color', style.activeColor);
 
-  el.tag.hidden = false;
+  el.tag.hidden = !state.showSpeaker;
   el.tagName.textContent = editor.names[page.speakerId] || ('Speaker ' + (style.index + 1));
 
   el.words.innerHTML = '';
@@ -919,6 +944,26 @@ el.highContrast.addEventListener('change', function () {
   persist('highContrast', el.highContrast.checked);
 });
 
+// The speaker name is an editorial label, not part of the video. Off by default
+// so the finished mp4 is not stamped with "Speaker 1". Applied to the live tag
+// element rather than a CSS class, because drawCaptionOnCanvas already skips a
+// hidden tag -- that keeps the preview and the burn identical by construction,
+// and re-running drawPage cannot resurrect a tag the user switched off.
+function applyShowSpeaker(on) {
+  state.showSpeaker = !!on;
+  if (!state.captions) return;
+  // renderAt() only rebuilds the page when the page index changes, so an
+  // in-place toggle would appear to do nothing until the next caption line.
+  // Nudging drawnPage forces drawPage() to run again, which reapplies the tag
+  // and leaves the active word correct because renderAt recomputes it.
+  state.drawnPage = -1;
+  renderAt(currentTimeMs());
+}
+el.showSpeaker.addEventListener('change', function () {
+  applyShowSpeaker(el.showSpeaker.checked);
+  persist('showSpeaker', el.showSpeaker.checked);
+});
+
 function restoreAppearance() {
   applySize(recall('size', el.size.value));
   el.size.value = recall('size', el.size.value);
@@ -926,8 +971,10 @@ function restoreAppearance() {
   applyPos(el.pos.value);
   el.reducedMotion.checked = recall('reducedMotion', 'false') === 'true';
   el.highContrast.checked = recall('highContrast', 'false') === 'true';
+  el.showSpeaker.checked = recall('showSpeaker', 'false') === 'true';
   document.body.classList.toggle('reduced-motion', el.reducedMotion.checked);
   document.body.classList.toggle('high-contrast', el.highContrast.checked);
+  applyShowSpeaker(el.showSpeaker.checked);
 }
 
 // ------------------------------------------------------- transcript editor
@@ -959,6 +1006,8 @@ function renderEditor(captions, job) {
   el.editorCard.hidden = !job;
   // Nothing to export without a video, so the panel only appears once one is.
   el.exportCard.hidden = !job || !state.hasVideo;
+  // A job that was already rendered shows its finished video straight away.
+  if (job && state.hasVideo) refreshExportUi(job);
   if (!job) { el.transcript.innerHTML = ''; el.nameEditor.innerHTML = ''; return; }
 
   // Speaker names, editable. The name is what the caption tag shows.
@@ -1285,6 +1334,9 @@ async function runExport() {
   capture.chunks = [];
   el.exportBtn.disabled = true;
   el.exportLink.hidden = true;
+  // A previous render must not sit next to a new one, or the player shows the
+  // old captions while the progress bar is working on the new ones.
+  hideExportResult();
   el.exportError.classList.add('hidden');
   el.exportBar.hidden = false;
   el.exportFill.style.width = '0%';
@@ -1329,7 +1381,10 @@ async function runExport() {
     ctx.drawImage(el.video, 0, 0, srcW, srcH);
     drawCaptionOnCanvas(ctx, scale);
     const pct = Math.min(100, Math.round(((performance.now() - startedAt) / 1000 / durationS) * 100));
-    el.exportFill.style.width = pct + '%';
+    // Capture is only the first ~88% of the job; the server encode owns the
+    // rest. Mapping the whole capture onto 0-100 made the bar sit at 100% while
+    // the encode was still running, so 100% stopped meaning "finished".
+    el.exportFill.style.width = Math.round(pct * 0.88) + '%';
     setExportStatus(
       'Recording ' + pct + '% — ' + fmt((performance.now() - startedAt) / 1000)
       + ' of ' + fmt(durationS * 1000), 'warn');
@@ -1391,6 +1446,36 @@ async function runExport() {
   }
 }
 
+// Show the finished file: playable in place, downloadable, and brought into
+// view. Called both when an export finishes and when a job that already has one
+// is reopened, so the result survives a page reload.
+function showExportResult(url, fileName) {
+  const bust = url + (url.indexOf('?') >= 0 ? '&' : '?') + 't=' + Date.now();
+  el.exportResult.hidden = false;
+  el.exportLink.hidden = false;
+  el.exportLink.href = bust;
+  el.exportLink.setAttribute('download', fileName || 'captions.mp4');
+  el.exportPlayer.src = bust;
+}
+
+function hideExportResult() {
+  el.exportResult.hidden = true;
+  el.exportLink.hidden = true;
+  el.exportPlayer.removeAttribute('src');
+  el.exportPlayer.load();
+}
+
+async function refreshExportUi(jobId) {
+  if (!jobId) { hideExportResult(); return false; }
+  try {
+    const s = await fetch('/api/caption-jobs/' + encodeURIComponent(jobId) +
+                          '/export-status', { cache: 'no-store' }).then((r) => r.json());
+    if (s && s.ready) { showExportResult(s.url); return true; }
+  } catch (e) { /* no export yet, or the job went away */ }
+  hideExportResult();
+  return false;
+}
+
 async function pollExport(job) {
   const deadline = Date.now() + 10 * 60 * 1000;
   while (Date.now() < deadline) {
@@ -1402,9 +1487,10 @@ async function pollExport(job) {
     } catch (e) { continue; }
     if (s.ready) {
       el.exportBar.hidden = true;
-      el.exportLink.hidden = false;
-      el.exportLink.href = s.url + '?t=' + Date.now();
-      setExportStatus('Done.', 'ok');
+      el.exportFill.style.width = '100%';
+      showExportResult(s.url);
+      setExportStatus('Done \u2014 your captioned video is ready.', 'ok');
+      try { el.exportResult.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (e) {}
       return true;
     }
     if (s.status === 'failed') {
@@ -1414,7 +1500,8 @@ async function pollExport(job) {
       setExportStatus('Encoding failed', 'err');
       return false;
     }
-    setExportStatus('Encoding the mp4 on the server…', 'warn');
+    setExportStatus('Encoding the mp4 on the server\u2026', 'warn');
+    el.exportFill.style.width = '92%';
   }
   el.exportBar.hidden = true;
   el.exportError.classList.remove('hidden');
