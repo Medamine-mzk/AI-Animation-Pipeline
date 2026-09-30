@@ -15,7 +15,14 @@
          outranks the UA stylesheet's `[hidden]{display:none}`
      Either way an empty overlay was left sitting on top of the video. */
   .hidden,[hidden]{display:none !important}
-  body{background:#0a0a0f;color:#fff;font-family:'Inter',system-ui,sans-serif;min-height:100vh}
+  body{background:#0a0a0f;color:#fff;font-family:'Inter',system-ui,sans-serif;min-height:100vh;
+       /* Backdrop behind the caption text (spec 4: "a soft dark translucent
+          backdrop bar behind the text block ... not just a text shadow").
+          Previously --plate was only defined for high-contrast mode, so
+          `background:var(--plate)` was invalid at computed-value time and the
+          plate rendered fully transparent in both the preview and the export --
+          what looked like a plate was just the box-shadow spread. */
+       --plate:rgba(11,11,18,0.72)}
   .glass{background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.12)}
   button{font-family:inherit}
 
@@ -73,7 +80,13 @@
         run at large caption sizes. Both are in em so they scale with the
         caption-size control. */
      margin:0 max(.10em,3px);padding:.05em .14em;
-     transition:background-color 140ms ease-out,color 140ms ease-out,
+     /* background-color is deliberately NOT transitioned. A fading pill stays
+        painted on the word that just finished speaking while the next one fades
+        in, so several words held a tinted background at once -- the karaoke
+        highlight smeared across the line and the exported pill looked like a
+        weak box instead of a solid one. Snapping the fill means exactly one word
+        is ever highlighted. The spring pop still eases, so nothing feels abrupt. */
+     transition:color 140ms ease-out,
                 transform 180ms cubic-bezier(0.34,1.56,0.64,1);
      will-change:transform}
   /* The currently-spoken word: filled accent pill + small spring pop (spec 4). */
@@ -82,7 +95,7 @@
   .w.lowconf{text-decoration:underline dotted rgba(255,255,255,0.5);text-underline-offset:4px}
 
   /* Reduced motion: keep the colour highlight, drop the movement (spec 4). */
-  body.reduced-motion .w{transition:background-color 140ms ease-out,color 140ms ease-out;
+  body.reduced-motion .w{transition:color 140ms ease-out;
                          transform:none !important}
   body.reduced-motion .caption-plate{transform:none;transition:opacity 150ms ease-out}
 
@@ -276,6 +289,34 @@
       <div id="nameEditor" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px"></div>
       <div id="transcript" style="max-height:42vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px"></div>
     </div>
+  <div class="card glass" id="exportCard" hidden>
+      <h2>Export</h2>
+      <p class="text-xs" style="color:rgba(255,255,255,0.45);line-height:1.5;margin-bottom:10px">
+        Records your video with the captions burned in, then saves an mp4.
+        <strong style="color:#fcd34d">This plays the clip once in real time</strong> &mdash;
+        a 2&#8209;minute clip takes 2&#8209;minutes. Keep this tab in front.
+      </p>
+      <button id="exportBtn" style="width:100%;background:#059669;border:none;color:#fff;
+              border-radius:8px;padding:9px;font-size:13px;font-weight:600;cursor:pointer">
+        &#127916; Export captioned mp4
+      </button>
+      <div id="exportBar" hidden style="margin-top:10px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
+          <span id="exportMsg" style="color:rgba(255,255,255,0.6)"></span>
+          <button id="exportCancel" style="background:rgba(220,38,38,0.6);border:none;color:#fff;
+                  border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer">Cancel</button>
+        </div>
+        <div style="background:rgba(0,0,0,0.35);border-radius:999px;height:5px;overflow:hidden">
+          <div id="exportFill" style="background:#059669;height:100%;width:0%;transition:width .25s"></div>
+        </div>
+      </div>
+      <a id="exportLink" hidden
+         style="display:block;margin-top:10px;text-align:center;padding:9px;border-radius:8px;
+                background:#059669;color:#fff;font-size:13px;font-weight:600;text-decoration:none">
+        &#11015; Download the mp4
+      </a>
+      <div id="exportError" class="note err hidden" style="margin-top:10px"></div>
+    </div>
   </aside>
 </main>
 
@@ -335,6 +376,14 @@ const el = {
   transcript: document.getElementById('transcript'),
   nameEditor: document.getElementById('nameEditor'),
   editState: document.getElementById('editState'),
+  exportCard: document.getElementById('exportCard'),
+  exportBtn: document.getElementById('exportBtn'),
+  exportBar: document.getElementById('exportBar'),
+  exportMsg: document.getElementById('exportMsg'),
+  exportFill: document.getElementById('exportFill'),
+  exportCancel: document.getElementById('exportCancel'),
+  exportLink: document.getElementById('exportLink'),
+  exportError: document.getElementById('exportError'),
 };
 
 let currentXhr = null;
@@ -658,6 +707,8 @@ async function maybeLoadVideo(job, forced) {
         el.video.addEventListener('loadedmetadata', function () {
           const mediaMs = Math.round(el.video.duration * 1000);
           state.mediaDurationMs = mediaMs;
+          // The export panel only makes sense once there is a real video.
+          el.exportCard.hidden = false;
           if (state.captions && mediaMs < state.captions.durationMs) {
             // Honest mismatch reporting, shown alongside the provenance rather
             // than replacing it: both facts matter, and truncating silently
@@ -906,6 +957,8 @@ function styleOf(speakerId) {
 
 function renderEditor(captions, job) {
   el.editorCard.hidden = !job;
+  // Nothing to export without a video, so the panel only appears once one is.
+  el.exportCard.hidden = !job || !state.hasVideo;
   if (!job) { el.transcript.innerHTML = ''; el.nameEditor.innerHTML = ''; return; }
 
   // Speaker names, editable. The name is what the caption tag shows.
@@ -1065,6 +1118,318 @@ function syncEditorToPlayhead(timeMs) {
     }
   }
 }
+
+// ------------------------------------------------------------------- export
+
+// The caption is drawn on a canvas from the *measured* geometry of the live DOM
+// caption, rather than re-laid-out in canvas code. The DOM is therefore the
+// single layout engine, and the burned-in frame cannot disagree with the preview
+// about where a word sits -- which is the "looks different after export" failure
+// the design warns about. Only the video frame and the caption's boxes are
+// redrawn; every colour, size and position comes from getBoundingClientRect.
+const capture = {
+  canvas: null,
+  ctx: null,
+  recorder: null,
+  chunks: [],
+  audioCtx: null,
+  audioDest: null,
+  sourceNode: null,
+  exporting: false,
+  cancelled: false,
+  rafId: null,
+};
+
+// Round corners on a path, used for the caption plate and the active pill.
+function roundRect(ctx, x, y, w, h, r) {
+  const rr = Math.min(r, w / 2, h / 2);
+  ctx.beginPath();
+  ctx.moveTo(x + rr, y);
+  ctx.arcTo(x + w, y, x + w, y + h, rr);
+  ctx.arcTo(x + w, y + h, x, y + h, rr);
+  ctx.arcTo(x, y + h, x, y, rr);
+  ctx.arcTo(x, y, x + w, y, rr);
+  ctx.closePath();
+}
+
+function drawCaptionOnCanvas(ctx, scale) {
+  // Nothing on screen -> nothing burned in.
+  if (!el.plate.classList.contains('visible') || el.plate.hidden) return;
+
+  const stage = el.stage.getBoundingClientRect();
+  const plate = el.plate.getBoundingClientRect();
+  if (plate.width === 0) return;
+
+  const cs = getComputedStyle(el.plate);
+  const x = (plate.left - stage.left) * scale;
+  const y = (plate.top - stage.top) * scale;
+  const w = plate.width * scale;
+  const h = plate.height * scale;
+
+  // Plate background. rgba() from the stylesheet, so high-contrast and opacity
+  // changes carry into the export without any duplication.
+  ctx.save();
+  const bg = cs.backgroundColor;
+  if (bg && bg !== 'rgba(0, 0, 0, 0)' && bg !== 'transparent') {
+    roundRect(ctx, x, y, w, h, 14 * scale);
+    ctx.fillStyle = bg;
+    ctx.fill();
+  }
+
+  // Speaker tag
+  if (!el.tag.hidden) {
+    const tag = el.tag.getBoundingClientRect();
+    const dot = el.tag.querySelector('.dot').getBoundingClientRect();
+    const tagCs = getComputedStyle(el.tag);
+    const fontPx = parseFloat(tagCs.fontSize) * scale;
+    ctx.font = tagCs.fontWeight + ' ' + fontPx + 'px ' + tagCs.fontFamily;
+    ctx.fillStyle = tagCs.color;
+    ctx.textBaseline = 'middle';
+    ctx.beginPath();
+    ctx.arc(
+      (dot.left - stage.left + dot.width / 2) * scale,
+      (dot.top - stage.top + dot.height / 2) * scale,
+      (dot.width / 2) * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillText(el.tagName.textContent,
+                 (tag.left - stage.left) * scale,
+                 (tag.top - stage.top + tag.height / 2) * scale);
+  }
+
+  // Words, in their real positions. The active pill is read off the same
+  // element the preview highlights, so the animation matches frame for frame.
+  //
+  // getBoundingClientRect() already returns the *visual* box, i.e. it includes
+  // the CSS `transform: scale()` on the active word. Applying that scale a second
+  // time via ctx.scale shifted every glyph by centre*(1-1/s), so words drifted
+  // progressively further right and ended up outside their own pills -- a solid
+  // box with the word missing. Only the font size needs the element's scale.
+  const spans = el.words.querySelectorAll('.w');
+
+  // The pill colour is read from the resolved custom property, once, and applied
+  // only to the word that actually carries .active. Reading each span's computed
+  // background-color instead would pick up whatever the CSS transition had
+  // interpolated, which is how more than one word ended up tinted in the export.
+  const pillColor = (el.plate.style.getPropertyValue('--active-color') || '').trim()
+    || (getComputedStyle(el.plate).getPropertyValue('--active-color') || '').trim()
+    || '#2f505f';
+
+  ctx.textBaseline = 'middle';
+  for (const span of spans) {
+    const r = span.getBoundingClientRect();
+    if (r.width === 0) continue;
+    const scs = getComputedStyle(span);
+    const px = parseFloat(scs.fontSize) * scale;
+    const isActive = span.classList.contains('active');
+
+    let s = 1;
+    try {
+      if (scs.transform && scs.transform !== 'none') {
+        s = new DOMMatrixReadOnly(scs.transform).a || 1;
+      }
+    } catch (e) { s = 1; }
+
+    const rx = (r.left - stage.left) * scale;
+    const ry = (r.top - stage.top) * scale;
+    const rw = r.width * scale;
+    const rh = r.height * scale;
+
+    if (isActive) {
+      roundRect(ctx, rx, ry, rw, rh, 9 * scale);
+      ctx.fillStyle = pillColor;
+      ctx.fill();
+      if (document.body.classList.contains('high-contrast')) {
+        ctx.lineWidth = 3 * scale;
+        ctx.strokeStyle = '#ffffff';
+        ctx.stroke();
+      }
+    }
+
+    // Font size is the unscaled computed size, so it needs the element's own
+    // scale applied on top of the stage scale.
+    ctx.font = scs.fontWeight + ' ' + (px * s) + 'px ' + scs.fontFamily;
+    ctx.fillStyle = scs.color;
+    ctx.fillText(span.textContent, rx, ry + rh / 2);
+  }
+  ctx.restore();
+}
+
+function pickMime() {
+  const candidates = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'];
+  for (const m of candidates) if (MediaRecorder.isTypeSupported(m)) return m;
+  return '';
+}
+
+function setExportStatus(msg, kind) {
+  el.exportMsg.textContent = msg;
+  el.exportMsg.style.color = kind === 'err' ? '#f87171'
+    : kind === 'ok' ? '#86efac' : 'rgba(255,255,255,0.6)';
+}
+
+async function runExport() {
+  if (capture.exporting) return;
+  const job = state.job;
+  if (!job) { setExportStatus('Load a video first.', 'err'); return; }
+  if (!state.hasVideo) {
+    setExportStatus('There is no video to export for this job.', 'err');
+    return;
+  }
+  const mime = pickMime();
+  if (!mime) {
+    setExportStatus('This browser cannot record video. Try Chrome or Edge.', 'err');
+    return;
+  }
+
+  capture.exporting = true;
+  capture.cancelled = false;
+  capture.chunks = [];
+  el.exportBtn.disabled = true;
+  el.exportLink.hidden = true;
+  el.exportError.classList.add('hidden');
+  el.exportBar.hidden = false;
+  el.exportFill.style.width = '0%';
+
+  const srcW = el.video.videoWidth || 1280;
+  const srcH = el.video.videoHeight || 720;
+  const canvas = document.createElement('canvas');
+  canvas.width = srcW;
+  canvas.height = srcH;
+  const ctx = canvas.getContext('2d');
+  const scale = srcW / el.stage.getBoundingClientRect().width;
+
+  // Audio: route the element through WebAudio into a capture destination, so
+  // the recording carries the original soundtrack.
+  let stream = canvas.captureStream(30);
+  try {
+    capture.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    await capture.audioCtx.resume();
+    capture.audioDest = capture.audioCtx.createMediaStreamDestination();
+    capture.sourceNode = capture.audioCtx.createMediaElementSource(el.video);
+    capture.sourceNode.connect(capture.audioDest);
+    capture.sourceNode.connect(capture.audioCtx.destination);
+    for (const track of capture.audioDest.stream.getAudioTracks()) {
+      stream.addTrack(track);
+    }
+  } catch (e) {
+    // Video-only is still a usable export; the original audio is muxed back in
+    // server-side, so this is not fatal.
+    console.warn('audio capture unavailable, exporting without it', e);
+  }
+
+  const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 6e6 });
+  capture.recorder = recorder;
+  recorder.ondataavailable = (e) => { if (e.data && e.data.size) capture.chunks.push(e.data); };
+
+  const durationS = el.video.duration || state.captions.durationMs / 1000;
+  let raf;
+  const startedAt = performance.now();
+  const draw = () => {
+    raf = requestAnimationFrame(draw);
+    if (capture.cancelled) return;
+    ctx.drawImage(el.video, 0, 0, srcW, srcH);
+    drawCaptionOnCanvas(ctx, scale);
+    const pct = Math.min(100, Math.round(((performance.now() - startedAt) / 1000 / durationS) * 100));
+    el.exportFill.style.width = pct + '%';
+    setExportStatus(
+      'Recording ' + pct + '% — ' + fmt((performance.now() - startedAt) / 1000)
+      + ' of ' + fmt(durationS * 1000), 'warn');
+  };
+
+  const finished = new Promise((resolve) => { recorder.onstop = resolve; });
+  recorder.start(250);
+  el.video.currentTime = 0;
+  try { await el.video.play(); } catch (e) { /* autoplay may need the gesture */ }
+  draw();
+
+  await new Promise((resolve) => {
+    const onEnd = () => resolve();
+    el.video.addEventListener('ended', onEnd, { once: true });
+    capture.stopWatch = setInterval(() => {
+      if (capture.cancelled || el.video.ended) {
+        clearInterval(capture.stopWatch);
+        resolve();
+      }
+    }, 200);
+  });
+  if (raf) cancelAnimationFrame(raf);
+  clearInterval(capture.stopWatch);
+
+  try { recorder.stop(); } catch (e) {}
+  await finished;
+  try { capture.sourceNode && capture.sourceNode.disconnect(); } catch (e) {}
+  try { capture.audioCtx && capture.audioCtx.close(); } catch (e) {}
+
+  const blob = new Blob(capture.chunks, { type: mime });
+  capture.exporting = false;
+  el.exportBtn.disabled = false;
+  if (capture.cancelled || blob.size === 0) {
+    setExportStatus('Export cancelled.', 'err');
+    el.exportBar.hidden = true;
+    return;
+  }
+
+  setExportStatus('Uploading ' + (blob.size / 1e6).toFixed(1) + 'MB and encoding…', 'warn');
+  el.exportFill.style.width = '100%';
+  try {
+    const res = await fetch('/api/caption-jobs/' + encodeURIComponent(job) + '/export', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/octet-stream' },
+      body: blob,
+    });
+    if (!res.ok) {
+      let detail = 'HTTP ' + res.status;
+      try { detail = (await res.json()).detail || detail; } catch (e) {}
+      throw new Error(detail);
+    }
+    // Encoding continues server-side; poll until the mp4 exists.
+    await pollExport(job);
+  } catch (e) {
+    el.exportBar.hidden = true;
+    el.exportError.classList.remove('hidden');
+    el.exportError.textContent = 'Export failed: ' + e.message;
+    setExportStatus('Export failed', 'err');
+  }
+}
+
+async function pollExport(job) {
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, 1500));
+    let s;
+    try {
+      s = await fetch('/api/caption-jobs/' + encodeURIComponent(job) + '/export-status',
+                      { cache: 'no-store' }).then((r) => r.json());
+    } catch (e) { continue; }
+    if (s.ready) {
+      el.exportBar.hidden = true;
+      el.exportLink.hidden = false;
+      el.exportLink.href = s.url + '?t=' + Date.now();
+      setExportStatus('Done.', 'ok');
+      return true;
+    }
+    if (s.status === 'failed') {
+      el.exportBar.hidden = true;
+      el.exportError.classList.remove('hidden');
+      el.exportError.textContent = 'Encoding failed: ' + (s.error || 'unknown error');
+      setExportStatus('Encoding failed', 'err');
+      return false;
+    }
+    setExportStatus('Encoding the mp4 on the server…', 'warn');
+  }
+  el.exportBar.hidden = true;
+  el.exportError.classList.remove('hidden');
+  el.exportError.textContent = 'Encoding took too long. Check the job\'s export.log.';
+  return false;
+}
+
+el.exportBtn.onclick = runExport;
+el.exportCancel.onclick = () => {
+  capture.cancelled = true;
+  try { capture.recorder && capture.recorder.stop(); } catch (e) {}
+  try { el.video.pause(); } catch (e) {}
+  el.exportBar.hidden = true;
+  setExportStatus('Export cancelled.', 'err');
+};
 
 restoreAppearance();
 state.rafId = requestAnimationFrame(tick);

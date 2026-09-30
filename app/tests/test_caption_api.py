@@ -267,6 +267,141 @@ def test_rejected_edit_leaves_no_temp_file(client, editable_job):
     assert leftovers == [], f"interrupted save left {leftovers}"
 
 
+# ----------------------------------------------------------------- export
+
+
+@pytest.fixture
+def exportable_job(tmp_path, monkeypatch):
+    """A finished caption job with a source video, ready to export."""
+    from app.pipeline.captions import build_caption_set
+    from app.pipeline.word_timeline import build_word_timeline
+
+    monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    d = tmp_path / "cap_export01"
+    d.mkdir()
+    (d / "audio.wav").write_bytes(b"RIFFfake")
+    (d / "source.mp4").write_bytes(b"\x00" * 2048)
+    tl = build_word_timeline(
+        [{"word": "hi", "start": 0.1, "end": 0.4, "speaker": "A", "score": 0.9}],
+        language="en",
+        duration_s=1.0,
+    )
+    (d / "captions.json").write_text(
+        build_caption_set(tl).model_dump_json(indent=2), encoding="utf-8"
+    )
+    (d / "meta.json").write_text(
+        json.dumps({"id": d.name, "status": "done"}), encoding="utf-8"
+    )
+    return d
+
+
+def test_export_starts_on_a_recording(client, exportable_job, monkeypatch):
+    started = {}
+    monkeypatch.setattr(
+        captions_api, "_spawn_export",
+        lambda job_id: started.setdefault("job", job_id) and 4242 or 4242,
+    )
+    r = client.post(
+        "/api/caption-jobs/cap_export01/export",
+        content=b"RIFF....WEBMfake-bytes",
+        headers={"Content-Type": "application/octet-stream"},
+    )
+    assert r.status_code == 200, r.text
+    assert r.json()["status"] == "encoding"
+    assert started["job"] == "cap_export01"
+
+    # The recording is written under a name the exporter owns.
+    assert (exportable_job / "recording.webm").exists()
+    meta = json.loads((exportable_job / "meta.json").read_text(encoding="utf-8"))
+    assert meta["exportStatus"] == "encoding"
+    assert meta["exportError"] is None
+
+
+def test_export_rejects_an_empty_recording(client, exportable_job, monkeypatch):
+    monkeypatch.setattr(captions_api, "_spawn_export", lambda j: 1)
+    r = client.post("/api/caption-jobs/cap_export01/export", content=b"")
+    assert r.status_code == 400
+    assert "empty" in r.json()["detail"].lower()
+    assert not (exportable_job / "recording.webm").exists()
+
+
+def test_export_rejects_a_3d_job_id(client, exportable_job, monkeypatch):
+    monkeypatch.setattr(captions_api, "_spawn_export", lambda j: 1)
+    r = client.post("/api/caption-jobs/de988512/export", content=b"x")
+    assert r.status_code == 400
+
+
+def test_export_needs_captions_first(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    d = tmp_path / "cap_nocaps01"
+    d.mkdir()
+    (d / "source.mp4").write_bytes(b"\x00" * 64)
+    (d / "meta.json").write_text(json.dumps({"id": d.name}), encoding="utf-8")
+    r = client.post(f"/api/caption-jobs/{d.name}/export", content=b"x")
+    assert r.status_code == 409
+    assert "nothing to burn in" in r.json()["detail"]
+
+
+def test_export_status_before_any_export(client, exportable_job):
+    r = client.get("/api/caption-jobs/cap_export01/export-status")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ready"] is False
+    assert body["url"] is None
+    assert body["status"] == "idle"
+
+
+def test_export_status_reports_the_failure_reason(client, exportable_job):
+    meta = json.loads((exportable_job / "meta.json").read_text(encoding="utf-8"))
+    meta["exportStatus"] = "failed"
+    meta["exportError"] = "the recording could not be read as media"
+    (exportable_job / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
+
+    body = client.get("/api/caption-jobs/cap_export01/export-status").json()
+    assert body["status"] == "failed"
+    assert "could not be read" in body["error"]
+
+
+def test_download_is_404_before_an_export_exists(client, exportable_job):
+    r = client.get("/caption-jobs/cap_export01/export.mp4")
+    assert r.status_code == 404
+
+
+def test_download_serves_the_mp4_with_a_filename(client, exportable_job):
+    """The explicit route must win over the StaticFiles mount that shares the
+    /caption-jobs prefix, so the browser saves it with a sensible name."""
+    out = exportable_job / "export.mp4"
+    out.write_bytes(b"\x00" * 4096)
+    r = client.get("/caption-jobs/cap_export01/export.mp4")
+    assert r.status_code == 200
+    assert r.headers.get("content-type") == "video/mp4"
+    assert "cap_export01" in (r.headers.get("content-disposition") or "")
+
+
+def test_export_routes_precede_the_static_mount():
+    """Ordering matters in Starlette: a mount declared first shadows later
+    routes sharing its prefix.
+
+    Mounts carry a `path` too, so they have to be matched by type, not by
+    checking whether a path starts with the prefix.
+    """
+    from starlette.routing import Mount
+
+    routes = list(captions_api.router.routes)
+    download = next(
+        i for i, r in enumerate(routes)
+        if getattr(r, "path", None) == "/caption-jobs/{job_id}/export.mp4"
+    )
+    mount = next(
+        i for i, r in enumerate(routes)
+        if isinstance(r, Mount) and getattr(r, "path", "") == "/caption-jobs"
+    )
+    assert download < mount, (
+        f"the download route is at position {download} and the /caption-jobs "
+        f"mount at {mount}; the mount must come later or it shadows the route"
+    )
+
+
 # ---------------------------------------------------------------- isolation
 
 

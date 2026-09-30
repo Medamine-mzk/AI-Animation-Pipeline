@@ -70,32 +70,116 @@ router = APIRouter()
 ALLOWED_MODELS = {"tiny", "base", "small"}
 
 
-@router.get("/captions.html", include_in_schema=False)
-def captions_page() -> FileResponse:
-    """The caption renderer.
-
-    Served as an explicit route rather than a root static mount so the server
-    never exposes the whole repository, matching how the other pages are served.
-    """
-    if not PAGE.exists():
-        # Surfaced as a plain 404 by FastAPI rather than a confusing 500.
-        raise FileNotFoundError("captions.html is missing from the repository")
-    return FileResponse(str(PAGE))
-
-
-# The demo fixture is committed, unlike jobs_captions/ (gitignored), so a fresh
-# checkout can open the page and see captions before running any upload flow.
-if DEMO_DIR.exists():
-    router.mount(
-        "/captions-demo", StaticFiles(directory=str(DEMO_DIR)), name="captions-demo"
+@router.get("/caption-jobs/{job_id}/export.mp4")
+def download_export(job_id: str):
+    """Serve the finished captioned mp4."""
+    _require_caption_job(job_id)
+    path = _job_dir(job_id) / "export.mp4"
+    if not path.exists():
+        raise HTTPException(
+            status_code=404, detail=f"caption job {job_id} has no export yet"
+        )
+    return FileResponse(
+        str(path),
+        media_type="video/mp4",
+        filename=f"{job_id}.mp4",
+        headers={"Cache-Control": "no-store"},
     )
 
-# Job artifacts for the renderer to fetch. Its own mount, so the 3D feature's
-# /jobs mount is left alone.
-JOBS.mkdir(parents=True, exist_ok=True)
-router.mount(
-    "/caption-jobs", StaticFiles(directory=str(JOBS)), name="caption-jobs"
-)
+
+@router.post("/api/caption-jobs/{job_id}/export")
+async def start_export(job_id: str, request: Request):
+    """Accept a browser recording and start the encode.
+
+    Two phases on purpose. The browser captures the video with burned captions
+    (realtime, see app/pipeline/caption_export.py for why), posts it here, and
+    this returns immediately; the encode then runs as its own subprocess. Doing
+    libx264 inline would block the event loop for the whole encode, and doing the
+    capture inline would block it for the length of the clip.
+
+    The recording is written under a name the exporter owns, never a
+    caller-supplied path.
+    """
+    _require_caption_job(job_id)
+    if not (_job_dir(job_id) / "captions.json").exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"caption job {job_id} has no captions, so there is nothing to burn in",
+        )
+    if (_job_dir(job_id) / "source.mp4").exists() is False:
+        raise HTTPException(
+            status_code=409, detail=f"caption job {job_id} has no source video"
+        )
+
+    body = await request.body()
+    if not body:
+        raise HTTPException(status_code=400, detail="the recording is empty (0 bytes)")
+    if len(body) > 600 * 1024 * 1024:
+        raise HTTPException(
+            status_code=413,
+            detail=f"recording is {len(body) / 1e6:.0f} MB, over the 600 MB limit",
+        )
+
+    job_path = _job_dir(job_id)
+    (job_path / "recording.webm").write_bytes(body)
+    (job_path / "export.mp4").unlink(missing_ok=True)
+
+    pid = _spawn_export(job_id)
+    if not pid:
+        raise HTTPException(
+            status_code=500, detail="the export worker could not be started"
+        )
+    _update(job_id, exportStatus="encoding", exportError=None, exportRequestedAt=time.time())
+    return {"jobId": job_id, "status": "encoding", "recordingBytes": len(body)}
+
+
+def _spawn_export(job_id: str) -> int:
+    """Run the encoder in its own process. See _spawn_caption_job for why."""
+    cmd = [
+        sys.executable, "-m", "app.pipeline.caption_export",
+        str(_job_dir(job_id)),
+    ]
+    log_path = _job_dir(job_id) / "export.log"
+    try:
+        with log_path.open("ab") as log:
+            proc = subprocess.Popen(
+                cmd, cwd=str(ROOT), stdout=log, stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+            )
+    except OSError as exc:
+        _update(job_id, exportStatus="failed", exportError=str(exc))
+        return 0
+    _update(job_id, exportPid=proc.pid)
+    return proc.pid
+
+
+@router.get("/api/caption-jobs/{job_id}/export-status")
+def export_status(job_id: str):
+    """Report encode progress, including the failure reason when it failed."""
+    _require_caption_job(job_id)
+    meta = _read_meta(job_id)
+    out = _job_dir(job_id) / "export.mp4"
+    manifest = _job_dir(job_id) / "export.json"
+
+    info = {
+        "status": meta.get("exportStatus", "idle"),
+        # Not just "the file exists": ffmpeg creates its output immediately and
+        # fills it in, so a partially encoded mp4 would be handed out as ready.
+        # The manifest is written last, after the atomic rename, so requiring it
+        # means the file is complete.
+        "ready": out.exists() and manifest.exists(),
+        "error": meta.get("exportError"),
+        "url": f"/caption-jobs/{job_id}/export.mp4"
+        if (out.exists() and manifest.exists()) else None,
+    }
+    if manifest.exists():
+        try:
+            info["details"] = json.loads(manifest.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            pass
+    return info
+
+
 
 
 # ------------------------------------------------------------------ job store
@@ -405,3 +489,36 @@ def delete_caption_job(job_id: str):
         raise HTTPException(status_code=404, detail=f"caption job {job_id} not found")
     _purge(d)
     return {"deleted": job_id}
+
+
+# ------------------------------------------------------------- static mounts
+# Declared last on purpose. Starlette matches routes in registration order, so a
+# mount placed earlier shadows any explicit route sharing its prefix:
+# /caption-jobs/{id}/export.mp4 was being served by StaticFiles instead of the
+# route that attaches a download filename.
+@router.get("/captions.html", include_in_schema=False)
+def captions_page() -> FileResponse:
+    """The caption renderer.
+
+    Served as an explicit route rather than a root static mount so the server
+    never exposes the whole repository, matching how the other pages are served.
+    """
+    if not PAGE.exists():
+        # Surfaced as a plain 404 by FastAPI rather than a confusing 500.
+        raise FileNotFoundError("captions.html is missing from the repository")
+    return FileResponse(str(PAGE))
+
+
+# The demo fixture is committed, unlike jobs_captions/ (gitignored), so a fresh
+# checkout can open the page and see captions before running any upload flow.
+if DEMO_DIR.exists():
+    router.mount(
+        "/captions-demo", StaticFiles(directory=str(DEMO_DIR)), name="captions-demo"
+    )
+
+# Job artifacts for the renderer to fetch. Its own mount, so the 3D feature's
+# /jobs mount is left alone.
+JOBS.mkdir(parents=True, exist_ok=True)
+router.mount(
+    "/caption-jobs", StaticFiles(directory=str(JOBS)), name="caption-jobs"
+)
