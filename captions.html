@@ -73,7 +73,12 @@
   .caption-words{font-size:var(--caption-size,34px);font-weight:700;line-height:1.32;
                  letter-spacing:-0.01em;text-align:center;
                  /* Keep to the lower-third: never more than two lines. */
-                 display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+                 /* Three lines, not two. A page may carry up to 8 words, and on a narrow frame
+       (a 720x1280 portrait clip renders ~344px wide) 8 words genuinely need
+       about three lines. At two, the clamp silently swallowed whole words
+       mid-sentence, which reads as a transcription error rather than a layout
+       one. Three lines is still an ordinary subtitle block. */
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
   .w{display:inline-block;color:#fff;border-radius:9px;
      /* margin is the gap BETWEEN words; padding is the pill's own inset around
         the glyphs. Keeping them separate is what stops words reading as one
@@ -352,6 +357,7 @@ const state = {
   video: null,
   hasVideo: false,
   showSpeaker: false,
+  sizeUserSet: false,
   mediaDurationMs: 0,
   job: null,
   rafId: null,
@@ -497,6 +503,23 @@ function postJob(url, headers, body, onProgress) {
   });
 }
 
+// Every follow-up request is keyed by the job id, so read it through here.
+// A missing id used to be interpolated straight into a URL as the literal string
+// "undefined"; the API answered 400 and the page reported "Lost contact with the
+// server", which said nothing about the real cause even though the upload had
+// worked. Accept either spelling, but require a real caption id, and name the
+// keys we actually received when it is absent.
+function jobIdFrom(res) {
+  const id = res && (res.jobId || res.job_id);
+  if (typeof id !== 'string' || !id.startsWith('cap_')) {
+    throw new Error('the server accepted the upload but returned no usable job id'
+      + (res && typeof res === 'object'
+          ? ' (keys: ' + Object.keys(res).join(', ') + ')'
+          : ''));
+  }
+  return id;
+}
+
 async function uploadFile(file) {
   if (!file) return;
   setSourceStatus('');
@@ -508,10 +531,16 @@ async function uploadFile(file) {
       file,
       (pct) => setProgress(pct, 'Uploading ' + file.name + '… ' + pct + '%')
     );
+    // The API returns the id as `jobId` (camelCase, like durationS/resolution).
+    // Reading `res.job_id` yielded undefined, so the poll below requested
+    // /api/caption-jobs/undefined, the API rejected it with 400, and the whole
+    // intake path reported "Lost contact with the server" even though the upload
+    // had succeeded and the job was transcribing normally.
     setProgress(6, 'Queued…');
-    setSourceStatus('Job ' + res.job_id + ' — ' + (res.durationS || '?') + 's, ' +
+    const jobId = jobIdFrom(res);
+    setSourceStatus('Job ' + jobId + ' — ' + (res.durationS || '?') + 's, ' +
                     (res.resolution || '?') + '. Transcribing now.', 'ok');
-    pollJob(res.job_id);
+    pollJob(jobId);
   } catch (e) {
     resetSourceCard();
     if (e.message !== 'Cancelled') setSourceStatus('Upload rejected: ' + e.message, 'err');
@@ -528,8 +557,9 @@ async function submitUrl() {
     const res = await postJob('/api/caption-jobs', { 'Content-Type': 'application/json' },
                                JSON.stringify({ url }));
     setProgress(6, 'Queued…');
-    setSourceStatus('Job ' + res.job_id + ' — ' + (res.durationS || '?') + 's. Transcribing now.', 'ok');
-    pollJob(res.job_id);
+    const jobId = jobIdFrom(res);
+    setSourceStatus('Job ' + jobId + ' — ' + (res.durationS || '?') + 's. Transcribing now.', 'ok');
+    pollJob(jobId);
   } catch (e) {
     resetSourceCard();
     if (e.message !== 'Cancelled') setSourceStatus('Link rejected: ' + e.message, 'err');
@@ -703,6 +733,57 @@ async function loadCaptions() {
   await maybeLoadVideo(job, video);
 }
 
+// The stage has to frame the footage's real shape. Everything the export burns
+// in is positioned from the stage's rect and scaled by srcW / stage.width, so a
+// stage whose aspect disagrees with the video puts the captions in the wrong
+// place on anything that is not 16:9 -- a portrait phone clip came out with the
+// caption band floating in the letterbox.
+//
+// The CSS keeps 16/9 as the pre-metadata default so the demo still has a
+// sensible frame; this overrides it once the real dimensions are known.
+// Caption size has to follow the frame's shape. It used to be a flat 34px, which
+// is right for a 1280-wide landscape stage but far too large for a portrait
+// phone video, whose stage is only ~344px wide: a page needed four lines, the
+// two-line clamp cut it, and words disappeared mid-sentence with no warning.
+//
+// Derived from the video's intrinsic size rather than the rendered stage, so the
+// result does not depend on when layout happens to settle. The slider still
+// overrides -- this only chooses the default the first time a clip is loaded.
+function autoCaptionPx(vw, vh) {
+  // Height enters at 1.6x so a wide-but-short frame is treated like its width,
+  // keeping the long-standing 34px on 16:9 material while shrinking with width.
+  const base = Math.min(vw, vh * 1.6);
+  return Math.max(16, Math.min(36, Math.round(base * 0.030)));
+}
+
+function applyStageAspect(vw, vh) {
+  if (!vw || !vh) return;
+  const ratio = vw / vh;
+  state.stageAspect = ratio;
+  const s = el.stage.style;
+  s.aspectRatio = String(ratio);
+  // Cap the frame by height so a tall vertical video does not produce a stage
+  // taller than the viewport, and cap the width by the matching amount so the
+  // box keeps the video's exact shape. Capping height alone would squash the
+  // ratio and reintroduce the letterbox this is meant to remove.
+  s.maxHeight = '68vh';
+  s.maxWidth = 'calc(68vh * ' + ratio + ')';
+  s.marginLeft = 'auto';
+  s.marginRight = 'auto';
+  if (!state.sizeUserSet) {
+    const px = autoCaptionPx(vw, vh);
+    el.size.value = String(px);
+    applySize(px);
+  }
+  // The slider's own bounds follow the frame too. It was fixed at 18-64px, which
+  // on a 720-wide portrait clip lets the user pick 64px -- about a fifth of the
+  // frame's width per line, so every word takes its own row and the three-line
+  // clamp throws most of the page away. On 1280-wide material the computed
+  // bounds come out at 18-64, so the familiar landscape range is unchanged.
+  el.size.min = String(Math.max(12, Math.round(vw * 0.014)));
+  el.size.max = String(Math.max(28, Math.min(64, Math.round(vw * 0.055))));
+}
+
 // The real video lands with the upload step (M4). Until then the stage runs on
 // a synthetic clock, so caption timing can still be verified honestly.
 // ?video=<path> forces a specific file, which is how the renderer is checked
@@ -727,6 +808,13 @@ async function maybeLoadVideo(job, forced) {
         el.video.addEventListener('loadedmetadata', function () {
           const mediaMs = Math.round(el.video.duration * 1000);
           state.mediaDurationMs = mediaMs;
+          // Match the stage to the footage. It used to be pinned to 16/9, so a
+          // portrait phone video was letterboxed inside a landscape box. That
+          // did not just look wrong: drawCaptionOnCanvas maps caption positions
+          // from the stage's rect onto a canvas of the video's real size, so a
+          // stage with the wrong aspect ratio burned the captions into the wrong
+          // part of a non-16:9 frame, scaled as though the frame were landscape.
+          applyStageAspect(el.video.videoWidth, el.video.videoHeight);
           // The export panel only makes sense once there is a real video.
           el.exportCard.hidden = false;
           // renderEditor() runs before the media has metadata, so its refresh of
@@ -923,6 +1011,9 @@ function applySize(px) {
   el.sizeVal.textContent = px + 'px';
 }
 el.size.addEventListener('input', function () {
+  // Once the user picks a size it wins, and a later clip must not silently
+  // override it with an automatic default.
+  state.sizeUserSet = true;
   applySize(el.size.value);
   persist('size', el.size.value);
 });
@@ -1424,7 +1515,10 @@ async function runExport() {
   }
 
   setExportStatus('Uploading ' + (blob.size / 1e6).toFixed(1) + 'MB and encoding…', 'warn');
-  el.exportFill.style.width = '100%';
+  // 90%, not 100%: the capture finished at 88% and the server encode has not run
+  // yet. Jumping to 100% here made the bar sit at "done" and then fall back to
+  // 92% while pollExport waited, so 100% briefly lied.
+  el.exportFill.style.width = '90%';
   try {
     const res = await fetch('/api/caption-jobs/' + encodeURIComponent(job) + '/export', {
       method: 'POST',

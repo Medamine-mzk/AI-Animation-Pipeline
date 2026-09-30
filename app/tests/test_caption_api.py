@@ -19,6 +19,7 @@ from fastapi.routing import Mount
 from fastapi.testclient import TestClient
 
 from app.api import captions as captions_api
+from app.pipeline import caption_source
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 VIDEO = ROOT / "media" / "test-video.mp4"
@@ -112,6 +113,14 @@ def test_missing_job_is_404(client):
 def test_rejections_leave_no_job_dir_behind(client, tmp_path, monkeypatch):
     """A rejected upload must not leave a half-built job for the list to show."""
     monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    # new_job_dir() lives in caption_source and creates the directory through
+    # JOBS_CAPTIONS over there, while the API reads and writes meta.json through
+    # its own JOBS. Patching only the API side left creation in the real
+    # jobs_captions/ tree, so these tests both failed on a missing directory and
+    # littered the working copy with orphan job dirs -- which also made the
+    # "leaves no job dir behind" assertions pass vacuously, since the orphan was
+    # never in tmp_path to begin with.
+    monkeypatch.setattr(caption_source, "JOBS_CAPTIONS", tmp_path)
     r = client.post(
         "/api/caption-jobs",
         content=b"not a video",
@@ -124,6 +133,14 @@ def test_rejections_leave_no_job_dir_behind(client, tmp_path, monkeypatch):
 def test_model_size_is_allow_listed(client, tmp_path, monkeypatch):
     """An unknown model must be refused, not downloaded in a worker process."""
     monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    # new_job_dir() lives in caption_source and creates the directory through
+    # JOBS_CAPTIONS over there, while the API reads and writes meta.json through
+    # its own JOBS. Patching only the API side left creation in the real
+    # jobs_captions/ tree, so these tests both failed on a missing directory and
+    # littered the working copy with orphan job dirs -- which also made the
+    # "leaves no job dir behind" assertions pass vacuously, since the orphan was
+    # never in tmp_path to begin with.
+    monkeypatch.setattr(caption_source, "JOBS_CAPTIONS", tmp_path)
     if not VIDEO.exists():
         pytest.skip("media/test-video.mp4 not present")
     r = client.post(
@@ -137,7 +154,95 @@ def test_model_size_is_allow_listed(client, tmp_path, monkeypatch):
     assert not any(d.name.startswith("cap_") for d in tmp_path.iterdir() if d.is_dir())
 
 
-# ------------------------------------------------------------- editing
+def test_upload_returns_a_usable_job_id(client, tmp_path, monkeypatch):
+    """A successful upload must hand back the key the page actually reads.
+
+    captions.html calls jobIdFrom() on this response and then builds every
+    follow-up URL from it. The endpoint returned `jobId` while the page read
+    `job_id`, so every upload produced a working job that the page then failed
+    to follow: it polled /api/caption-jobs/undefined, got a 400, and reported
+    "Lost contact with the server" while transcription ran on normally. Nothing
+    asserted this response, so the whole intake path could be broken with a
+    green suite. This pins the contract on both intake routes.
+    """
+    monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    # new_job_dir() lives in caption_source and creates the directory through
+    # JOBS_CAPTIONS over there, while the API reads and writes meta.json through
+    # its own JOBS. Patching only the API side left creation in the real
+    # jobs_captions/ tree, so these tests both failed on a missing directory and
+    # littered the working copy with orphan job dirs -- which also made the
+    # "leaves no job dir behind" assertions pass vacuously, since the orphan was
+    # never in tmp_path to begin with.
+    monkeypatch.setattr(caption_source, "JOBS_CAPTIONS", tmp_path)
+    started = {}
+    monkeypatch.setattr(
+        captions_api,
+        "_spawn_caption_job",
+        lambda job_id, model_size, language: started.setdefault("job", job_id) and 4242 or 4242,
+    )
+    if not VIDEO.exists():
+        pytest.skip("media/test-video.mp4 not present")
+
+    r = client.post(
+        "/api/caption-jobs",
+        content=VIDEO.read_bytes(),
+        headers={"X-Filename": "v.mp4"},
+    )
+    assert r.status_code == 200, r.text
+    body = r.json()
+
+    # The exact spelling the page reads, and the shape jobIdFrom() demands.
+    assert "jobId" in body, f"page reads res.jobId, got keys {sorted(body)}"
+    assert body["jobId"].startswith("cap_"), body["jobId"]
+    assert body["status"] == "queued", body["status"]
+    # camelCase throughout, matching durationS/resolution in the same payload.
+    assert "job_id" not in body, "snake_case alias invites the page to read the wrong key"
+
+    # The facts the intake card puts on screen, so they must actually be present.
+    assert isinstance(body.get("durationS"), (int, float)), body
+    assert body.get("resolution"), body
+    assert started["job"] == body["jobId"]
+
+    # And the id really does address the job it claims to.
+    assert client.get(f"/api/caption-jobs/{body['jobId']}").status_code == 200
+
+
+def test_url_intake_returns_the_same_job_id_shape(client, tmp_path, monkeypatch):
+    """The direct-link route shares the response shape; pin it too.
+
+    submitUrl() in captions.html reads the same key as uploadFile(), so a change
+    to one route's payload would silently break only that intake path.
+    """
+    monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    # new_job_dir() lives in caption_source and creates the directory through
+    # JOBS_CAPTIONS over there, while the API reads and writes meta.json through
+    # its own JOBS. Patching only the API side left creation in the real
+    # jobs_captions/ tree, so these tests both failed on a missing directory and
+    # littered the working copy with orphan job dirs -- which also made the
+    # "leaves no job dir behind" assertions pass vacuously, since the orphan was
+    # never in tmp_path to begin with.
+    monkeypatch.setattr(caption_source, "JOBS_CAPTIONS", tmp_path)
+    monkeypatch.setattr(captions_api, "_spawn_caption_job", lambda j, m, l: 4242)
+    monkeypatch.setattr(
+        captions_api,
+        "ingest_url",
+        lambda url, job_dir, max_duration_s=None: {
+            "durationS": 12.5,
+            "resolution": "1280x720",
+            "source": "url",
+            "hasVideo": True,
+        },
+    )
+    r = client.post("/api/caption-jobs", json={"url": "https://x.test/v.mp4"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["jobId"].startswith("cap_"), body
+    assert "job_id" not in body, f"page reads res.jobId, got keys {sorted(body)}"
+    assert body["durationS"] == 12.5, body
+    assert body["resolution"] == "1280x720", body
+
+
+# ----------------------------------------------------------------- editing
 
 
 @pytest.fixture
@@ -147,6 +252,14 @@ def editable_job(tmp_path, monkeypatch):
     from app.pipeline.word_timeline import build_word_timeline
 
     monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    # new_job_dir() lives in caption_source and creates the directory through
+    # JOBS_CAPTIONS over there, while the API reads and writes meta.json through
+    # its own JOBS. Patching only the API side left creation in the real
+    # jobs_captions/ tree, so these tests both failed on a missing directory and
+    # littered the working copy with orphan job dirs -- which also made the
+    # "leaves no job dir behind" assertions pass vacuously, since the orphan was
+    # never in tmp_path to begin with.
+    monkeypatch.setattr(caption_source, "JOBS_CAPTIONS", tmp_path)
     d = tmp_path / "cap_edit0001"
     d.mkdir()
     (d / "audio.wav").write_bytes(b"RIFFfake")
@@ -249,6 +362,14 @@ def test_edit_rejects_a_3d_job_id(client, editable_job):
 
 def test_edit_on_a_job_with_no_captions_is_409(client, tmp_path, monkeypatch):
     monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    # new_job_dir() lives in caption_source and creates the directory through
+    # JOBS_CAPTIONS over there, while the API reads and writes meta.json through
+    # its own JOBS. Patching only the API side left creation in the real
+    # jobs_captions/ tree, so these tests both failed on a missing directory and
+    # littered the working copy with orphan job dirs -- which also made the
+    # "leaves no job dir behind" assertions pass vacuously, since the orphan was
+    # never in tmp_path to begin with.
+    monkeypatch.setattr(caption_source, "JOBS_CAPTIONS", tmp_path)
     d = tmp_path / "cap_pending01"
     d.mkdir()
     (d / "meta.json").write_text(
@@ -277,6 +398,14 @@ def exportable_job(tmp_path, monkeypatch):
     from app.pipeline.word_timeline import build_word_timeline
 
     monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    # new_job_dir() lives in caption_source and creates the directory through
+    # JOBS_CAPTIONS over there, while the API reads and writes meta.json through
+    # its own JOBS. Patching only the API side left creation in the real
+    # jobs_captions/ tree, so these tests both failed on a missing directory and
+    # littered the working copy with orphan job dirs -- which also made the
+    # "leaves no job dir behind" assertions pass vacuously, since the orphan was
+    # never in tmp_path to begin with.
+    monkeypatch.setattr(caption_source, "JOBS_CAPTIONS", tmp_path)
     d = tmp_path / "cap_export01"
     d.mkdir()
     (d / "audio.wav").write_bytes(b"RIFFfake")
@@ -333,6 +462,14 @@ def test_export_rejects_a_3d_job_id(client, exportable_job, monkeypatch):
 
 def test_export_needs_captions_first(client, tmp_path, monkeypatch):
     monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    # new_job_dir() lives in caption_source and creates the directory through
+    # JOBS_CAPTIONS over there, while the API reads and writes meta.json through
+    # its own JOBS. Patching only the API side left creation in the real
+    # jobs_captions/ tree, so these tests both failed on a missing directory and
+    # littered the working copy with orphan job dirs -- which also made the
+    # "leaves no job dir behind" assertions pass vacuously, since the orphan was
+    # never in tmp_path to begin with.
+    monkeypatch.setattr(caption_source, "JOBS_CAPTIONS", tmp_path)
     d = tmp_path / "cap_nocaps01"
     d.mkdir()
     (d / "source.mp4").write_bytes(b"\x00" * 64)
@@ -407,6 +544,14 @@ def test_export_routes_precede_the_static_mount():
 
 def test_caption_list_excludes_3d_jobs(client, tmp_path, monkeypatch):
     monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    # new_job_dir() lives in caption_source and creates the directory through
+    # JOBS_CAPTIONS over there, while the API reads and writes meta.json through
+    # its own JOBS. Patching only the API side left creation in the real
+    # jobs_captions/ tree, so these tests both failed on a missing directory and
+    # littered the working copy with orphan job dirs -- which also made the
+    # "leaves no job dir behind" assertions pass vacuously, since the orphan was
+    # never in tmp_path to begin with.
+    monkeypatch.setattr(caption_source, "JOBS_CAPTIONS", tmp_path)
     (tmp_path / "de988512").mkdir()
     (tmp_path / "de988512" / "meta.json").write_text(
         json.dumps({"id": "de988512", "status": "done"}), encoding="utf-8"
@@ -426,6 +571,14 @@ def test_caption_list_excludes_3d_jobs(client, tmp_path, monkeypatch):
 
 def test_delete_only_touches_caption_jobs(client, tmp_path, monkeypatch):
     monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    # new_job_dir() lives in caption_source and creates the directory through
+    # JOBS_CAPTIONS over there, while the API reads and writes meta.json through
+    # its own JOBS. Patching only the API side left creation in the real
+    # jobs_captions/ tree, so these tests both failed on a missing directory and
+    # littered the working copy with orphan job dirs -- which also made the
+    # "leaves no job dir behind" assertions pass vacuously, since the orphan was
+    # never in tmp_path to begin with.
+    monkeypatch.setattr(caption_source, "JOBS_CAPTIONS", tmp_path)
     three_d = tmp_path / "de988512"
     three_d.mkdir()
     (three_d / "meta.json").write_text("{}", encoding="utf-8")

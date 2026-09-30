@@ -232,14 +232,38 @@ await browser.close();
 
 // ---- verify the downloaded mp4 ------------------------------------------
 if (failures.length === 0) {
+  // The caption data drives both the expected duration and the choice of a
+  // genuinely silent moment. Hardcoding either was wrong for any clip but the
+  // one this was written against: that job's first caption starts at 1452ms, so
+  // t=0.30 really was silent, while a clip whose first caption starts at 251ms
+  // put a fully-lit caption plate in the "silence" frame and the pill comparison
+  // collapsed.
+  const caps = await (await fetch(`${BASE}/api/caption-jobs/${JOB}/captions`,
+    { cache: 'no-store' })).json();
+  const sourceS = (caps.durationMs || 0) / 1000;
+  const pickSilentMs = () => {
+    const pages = caps.pages.slice().sort((a, b) => a.startMs - b.startMs);
+    let best = { from: 0, to: 0 };
+    let edge = 0;
+    for (const p of pages) {
+      if (p.startMs - edge > best.to - best.from) best = { from: edge, to: p.startMs };
+      edge = Math.max(edge, p.endMs);
+    }
+    if (sourceS * 1000 - edge > best.to - best.from) best = { from: edge, to: sourceS * 1000 };
+    return best.to > best.from ? (best.from + best.to) / 2 : 0;
+  };
+
   const report = ff(['-hide_banner', '-i', DL, '-f', 'null', '-']);
   check('ffmpeg can read the exported file', report.includes('Duration:'),
         report.slice(0, 200).replace(/\n/g, ' '));
 
   const dur = /Duration: (\d+):(\d+):([\d.]+)/.exec(report);
   const secs = dur ? +dur[1] * 3600 + +dur[2] * 60 + +dur[3] : 0;
-  check('the duration is close to the source', secs > 3 && secs < 20,
-        `${secs.toFixed(2)}s for a ~10s source`);
+  // Relative to the real source length: the old 3-20s window rejected any clip
+  // longer than 20s outright, so a 25s portrait video could never pass.
+  check('the duration matches the source',
+        sourceS > 0 && Math.abs(secs - sourceS) < Math.max(1.5, sourceS * 0.12),
+        `${secs.toFixed(2)}s for a ${sourceS.toFixed(2)}s source`);
   check('the original audio is muxed in', /Audio:/.test(report),
         (/Audio: ([a-z0-9]+)/i.exec(report) || [])[1] || 'none');
   check('it is H.264 / yuv420p so browsers can play it',
@@ -264,12 +288,10 @@ if (failures.length === 0) {
 
   // A timestamp guaranteed to have a caption page mid-word, plus the exact
   // colour that word's pill must be painted in.
-  const caps = await (await fetch(`${BASE}/api/caption-jobs/${JOB}/captions`,
-    { cache: 'no-store' })).json();
   const sample = caps.pages.find((p) => p.words.length >= 3);
   const word = sample.words[1];
   const spokenAt = ((word.startMs + word.endMs) / 2 / 1000).toFixed(2);
-  const silentAt = '0.30';
+  const silentAt = (pickSilentMs() / 1000).toFixed(2);
   const style = caps.styles.find((s) => s.speakerId === sample.speakerId);
   const [pr, pg, pb] = hexToRgb(style.activeColor);
 
@@ -292,20 +314,25 @@ if (failures.length === 0) {
         Boolean(silentBand && spokenBand),
         `${silentBand ? silentBand.pixels : 0}px per band`);
 
-  // One pill, in the right colour, and only while a word is being spoken. This
+// One pill, in the right colour, and only while a word is being spoken. This
   // is the regression guard for the CSS transition that used to leave several
   // words holding a faded pill at once.
   //
-  // The silence baseline is compared relatively rather than against zero: the
-  // footage itself contains teal/blue-grey tones that land within tolerance, so
-  // "0 during silence" was never true. Speech has to be several times the
-  // silent frame instead. The "never more than one word" half of the guarantee
-  // is a DOM property and is asserted by probe_playback_pill.mjs.
+  // Measured as an absolute rise above the silent frame rather than a ratio.
+  // The footage itself contains teal/blue-grey tones inside the tolerance -- on
+  // one landscape clip the silent frame matched 4753px of the pill colour -- so
+  // any ratio test is really measuring how much of that particular video
+  // happens to be teal. The baseline is roughly constant across a clip, so the
+  // difference is the part that actually comes from the burn-in. The
+  // "never more than one word" half of the guarantee is a DOM property, asserted
+  // by probe_playback_pill.mjs.
+  const rise = spokenBand ? spokenBand.pill - silentBand.pill : -1;
   check('one active-word pill is burned in, only while speaking',
         Boolean(spokenBand && silentBand) &&
-        spokenBand.pill > 300 && spokenBand.pill > silentBand.pill * 4,
+        spokenBand.pill > 3000 && rise > 2000,
         `${spokenBand ? spokenBand.pill : 0}px of ${style.activeColor} at t=${spokenAt}`
-        + ` vs ${silentBand ? silentBand.pill : 0}px at t=${silentAt}`);
+        + ` vs ${silentBand ? silentBand.pill : 0}px at t=${silentAt}`
+        + ` (rise ${rise})`);
 
   check('the words are legible white text on the plate',
         Boolean(spokenBand) && spokenBand.white > 400,

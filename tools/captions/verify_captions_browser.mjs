@@ -248,26 +248,78 @@ try {
   });
 
   // --- caption size control -------------------------------------------
-  const sized = await page.evaluate(async () => {
+const sized = await page.evaluate(async () => {
     const s = document.getElementById('size');
-    s.value = '52';
+    // Inside the slider's real range: the bounds follow the video's width, so a
+    // hardcoded 52px is out of range on a portrait clip and silently clamps.
+    const want = Math.round((Number(s.min) + Number(s.max)) / 2);
+    s.value = String(want);
     s.dispatchEvent(new Event('input'));
     await new Promise((r) => setTimeout(r, 40));
     return {
+      want,
+      range: `${s.min}-${s.max}`,
       px: getComputedStyle(document.querySelector('#words .w')).fontSize,
       label: document.getElementById('sizeVal').textContent,
     };
   });
-  check('caption size control applies', sized.px === '52px' && sized.label === '52px',
-        `${sized.px} / ${sized.label}`);
+  check('caption size control applies',
+        sized.px === `${sized.want}px` && sized.label === `${sized.want}px`,
+        `${sized.px} / ${sized.label} (range ${sized.range})`);
 
-  // --- no overflow past two lines --------------------------------------
+// --- no overflow past three lines ------------------------------------
+  // Three, not two: a page may carry 8 words, and on a narrow frame that
+  // genuinely needs three lines. At two the clamp swallowed whole words
+  // mid-sentence, which reads as a transcription fault rather than a layout one.
   const lines = await page.evaluate(() => {
     const w = document.getElementById('words');
     const cs = getComputedStyle(w);
     return { clamp: cs.webkitLineClamp || cs.lineClamp, overflow: cs.overflow };
   });
-  check('captions clamped to two lines', String(lines.clamp) === '2', JSON.stringify(lines));
+  check('captions clamped to three lines', String(lines.clamp) === '3', JSON.stringify(lines));
+
+  // The stage must frame the video's real shape. Everything the export burns in
+  // is positioned from the stage rect and scaled by srcW / stage.width, so a
+  // stage pinned to 16/9 put a portrait clip's captions in the wrong part of the
+  // frame. Asserted against the loaded video, so it holds for any orientation.
+  const shape = await page.evaluate(() => {
+    const stage = document.getElementById('stage');
+    const v = document.getElementById('video');
+    const r = stage.getBoundingClientRect();
+    return {
+      videoW: v.videoWidth, videoH: v.videoHeight,
+      stageW: Math.round(r.width), stageH: Math.round(r.height),
+      declared: stage.style.aspectRatio,
+      hasVideo: captionsApp.state.hasVideo,
+    };
+  });
+  check('the stage frames the video\'s real shape',
+        !shape.hasVideo ||
+        (Math.abs(shape.stageW / shape.stageH - shape.videoW / shape.videoH) < 0.02),
+        shape.hasVideo
+          ? `${shape.videoW}x${shape.videoH} video, stage ${shape.stageW}x${shape.stageH}`
+          : 'no video loaded');
+
+  // No page may lose words to the clamp. Count the words actually rendered for
+  // each page and compare with the model.
+  const overflowPages = await page.evaluate(async () => {
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const v = document.getElementById('video');
+    const bad = [];
+    for (const p of captionsApp.state.captions.pages) {
+      const t = (p.words[0].startMs + p.words[0].endMs) / 2;
+      if (captionsApp.state.hasVideo) v.currentTime = t / 1000;
+      else captionsApp.state.timeMs = t;
+      await sleep(140);
+      const shown = document.querySelectorAll('#words .w').length;
+      if (shown !== p.words.length) {
+        bad.push(`page ${p.index}: ${shown}/${p.words.length} words shown`);
+      }
+    }
+    return bad;
+  });
+  check('no caption page loses words to the clamp',
+        overflowPages.length === 0, overflowPages.slice(0, 3).join('; ') || 'all pages complete');
 
   // --- honest reporting when captions outrun the media ------------------
   // Tests computed visibility, not the presence of the `hidden` class: this
@@ -321,8 +373,12 @@ try {
   const collisions = await page.evaluate(async () => {
     const s = document.getElementById('size');
     const out = [];
-    for (const px of ['20', '34', '64']) {
-      s.value = px;
+    // Drive the slider's real bounds rather than hardcoded sizes: they now
+    // follow the video's width, so 64px is out of range on a portrait clip and
+    // forcing it gave every word its own row.
+    const lo = Number(s.min), hi = Number(s.max);
+    for (const px of [lo, Math.round((lo + hi) / 2), hi]) {
+      s.value = String(px);
       s.dispatchEvent(new Event('input'));
       await new Promise((r) => setTimeout(r, 90));
       // Use the page with the most words so the check is meaningful.
@@ -344,15 +400,21 @@ try {
         if (Math.abs(rects[i].top - rects[i - 1].top) > 2) continue;
         minGap = Math.min(minGap, rects[i].left - rects[i - 1].right);
       }
-      out.push({ px: +px, words: spans.length, minGap: Math.round(minGap) });
+      // null means no two words shared a line, so there is no gap to collide
+      // in. That is a pass, not a failure -- it is what a very large size on a
+      // narrow frame legitimately produces.
+      out.push({
+        px: +px, words: spans.length,
+        minGap: Number.isFinite(minGap) ? Math.round(minGap) : null,
+      });
     }
-    s.value = '34';
+    s.value = String(Math.round((Number(s.min) + Number(s.max)) / 2));
     s.dispatchEvent(new Event('input'));
     return out;
   });
   for (const c of collisions) {
-    check(`words stay separated at ${c.px}px`, c.minGap >= 2,
-          `${c.words} words, min gap ${c.minGap}px`);
+    check(`words stay separated at ${c.px}px`, c.minGap === null || c.minGap >= 2,
+          `${c.words} words, min gap ${c.minGap === null ? 'n/a (one word per line)' : c.minGap + 'px'}`);
   }
 
   // --- transcript editor -------------------------------------------------
@@ -517,20 +579,23 @@ try {
         tagToggle.on === false && tagToggle.off === true,
         `on -> hidden=${tagToggle.on}, off -> hidden=${tagToggle.off}`);
 
-  // --- 2 lines at the largest size ------------------------------------
+// --- the largest size still fits the stage ---------------------------
   const overflow = await page.evaluate(() => {
     const s = document.getElementById('size');
-    s.value = '64';
+    const max = s.max;
+    s.value = max;
     s.dispatchEvent(new Event('input'));
     const w = document.getElementById('words');
     const plate = document.getElementById('plate');
     return {
+      max,
       plateH: plate.getBoundingClientRect().height,
       stageH: document.getElementById('stage').getBoundingClientRect().height,
       lines: Math.round(w.scrollHeight / parseFloat(getComputedStyle(w).lineHeight)),
     };
   });
-  check('64px captions still fit the stage', overflow.plateH < overflow.stageH,
+  check(`captions at the largest size (${overflow.max}px) still fit the stage`,
+        overflow.plateH < overflow.stageH,
         `plate ${Math.round(overflow.plateH)}px vs stage ${Math.round(overflow.stageH)}px`);
 
   if (shot) {
@@ -564,6 +629,90 @@ try {
     const buf = await page.screenshot({ type: 'png' });
     writeFileSync(shot, buf);
     console.log(`\nscreenshot (defaults, longest page) -> ${shot}`);
+  }
+
+  // The intake path, driven through the real file input.
+  //
+  // Both harnesses used to open a job that already existed, so the whole "user
+  // gives the page a video" path had no coverage at all. That is how the page
+  // could read `res.job_id` from a response that sends `jobId`, poll
+  // /api/caption-jobs/undefined, get a 400 and report "Lost contact with the
+  // server" -- while every check here passed.
+  //
+  // The POST is answered with the exact payload the API really sends, and the
+  // poll is answered with a terminal failure so the loop exits immediately.
+  // Nothing is transcribed and no job directory is created.
+  const stubId = 'cap_stub01';
+  const polled = [];
+  let createHits = 0;
+  const fixture = path.join(REPO, 'media', 'test-video.mp4');
+
+  if (!existsSync(fixture)) {
+    console.log('  (media/test-video.mp4 is absent -- intake checks skipped)');
+  } else {
+    await page.setRequestInterception(true);
+    const onRequest = (req) => {
+      const u = req.url();
+      const method = req.method();
+      if (method === 'POST' && /\/api\/caption-jobs$/.test(u)) {
+        createHits++;
+        // The exact payload the real endpoint sends.
+        req.respond({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            jobId: stubId, status: 'queued', durationS: 12.5, resolution: '1280x720',
+          }),
+        });
+        return;
+      }
+      if (method === 'GET' && /\/api\/caption-jobs\/[^/?]+$/.test(u)) {
+        polled.push(u);
+        // Answer the real id with a terminal status so the poll loop exits, and
+        // anything else with a 400 -- exactly what the API does. The page then
+        // distinguishes reaching its job from asking for the wrong one.
+        if (u.endsWith('/' + stubId)) {
+          req.respond({
+            status: 200,
+            contentType: 'application/json',
+            body: JSON.stringify({
+              id: stubId, status: 'failed', progress: 0,
+              error: 'STUB_MARKER the page polled its own job',
+            }),
+          });
+        } else {
+          req.respond({
+            status: 400,
+            contentType: 'application/json',
+            body: JSON.stringify({ detail: 'STUB_REJECTED ' + u.replace(BASE, '') }),
+          });
+        }
+        return;
+      }
+      req.continue();
+    };
+    page.on('request', onRequest);
+
+    await (await page.$('#fileInput')).uploadFile(fixture);
+    await new Promise((r) => setTimeout(r, 2500));
+
+    page.off('request', onRequest);
+    await page.setRequestInterception(false);
+
+    const paths = polled.map((u) => u.replace(BASE, ''));
+    const statusText = await page.evaluate(
+      () => document.getElementById('sourceStatus').textContent.trim());
+
+    check('the upload posts to the create endpoint', createHits === 1, `${createHits} POST(s)`);
+    check('the job poll uses the id the server returned',
+          polled.length > 0 && paths.every((p) => p.endsWith('/' + stubId)),
+          paths.join(', ') || 'no poll request was made');
+    check('the page reaches the job it just created',
+          statusText.includes('STUB_MARKER'), JSON.stringify(statusText));
+    check('no request is built with an undefined job id',
+          polled.length > 0 && !polled.some((u) => /undefined|null/.test(u))
+            && !statusText.includes('STUB_REJECTED'),
+          paths.join(', ') || 'none');
   }
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));
