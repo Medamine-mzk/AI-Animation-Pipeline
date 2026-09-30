@@ -3,7 +3,11 @@ __pycache__/
 *.pyc
 .venv/
 jobs/
+# Caption jobs (video uploads + generated captions). Kept out of jobs/ on
+# purpose so they can never surface in the 3D feature's My Projects list.
+jobs_captions/
 output/
 *.mp4
 tools/blender/
+node_modules/
 !app/tests/golden_clip.wav

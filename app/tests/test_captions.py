@@ -302,6 +302,49 @@ def test_summary_reports_counts():
     assert s["durationMs"] == 20000
 
 
+# --------------------------------------------------------------- provenance
+
+
+def test_caption_set_carries_word_alignment_provenance():
+    """The client has no other way to know the timings are real.
+
+    Provenance has to travel with the data, otherwise the renderer has to
+    hardcode a claim it cannot verify.
+    """
+    cs = build_caption_set(make_timeline())
+    assert cs.wordAlignment == "measured"
+    assert cs.model_dump()["wordAlignment"] == "measured"
+
+
+def test_caption_set_word_count_matches_pages():
+    cs = build_caption_set(make_timeline())
+    assert cs.wordCount == 15
+    assert cs.wordCount == sum(len(p.words) for p in cs.pages)
+
+
+def test_schema_rejects_inconsistent_word_count():
+    good = build_caption_set(make_timeline())
+    payload = good.model_dump()
+    payload["wordCount"] = 99
+    with pytest.raises(ValidationError):
+        CaptionSet.model_validate(payload)
+
+
+def test_schema_rejects_estimated_alignment_on_captions():
+    good = build_caption_set(make_timeline())
+    payload = good.model_dump()
+    payload["wordAlignment"] = "estimated"
+    with pytest.raises(ValidationError):
+        CaptionSet.model_validate(payload)
+
+
+def test_alignment_literal_matches_the_word_timeline_contract():
+    """Guards against the two schemas drifting apart on purpose."""
+    from app.schemas.word_timeline import WordAlignment as TimelineAlignment
+
+    assert CaptionSet.model_fields["wordAlignment"].annotation == TimelineAlignment
+
+
 def test_style_palette_is_deterministic():
     # Same input -> same colours, so an export matches its preview.
     a = build_caption_set(make_timeline())

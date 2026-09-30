@@ -45,9 +45,12 @@ const OUT = process.env.TEMP || 'C:\\Users\\SBS\\AppData\\Local\\Temp\\opencode'
 
 const args = process.argv.slice(2);
 const videoArg = args.includes('--video') ? args[args.indexOf('--video') + 1] : null;
+const jobArg = args.includes('--job') ? args[args.indexOf('--job') + 1] : null;
 const shot = args.includes('--shot') ? args[args.indexOf('--shot') + 1] : null;
 
-const url = BASE + '/captions.html' + (videoArg ? '?video=' + encodeURIComponent(videoArg) : '');
+const query = jobArg ? '?job=' + encodeURIComponent(jobArg)
+  : videoArg ? '?video=' + encodeURIComponent(videoArg) : '';
+const url = BASE + '/captions.html' + query;
 
 const browser = await puppeteer.launch({
   executablePath: CHROME,
@@ -237,21 +240,50 @@ try {
   check('captions clamped to two lines', String(lines.clamp) === '2', JSON.stringify(lines));
 
   // --- honest reporting when captions outrun the media ------------------
+  // Tests computed visibility, not the presence of the `hidden` class: this
+  // page uses plain CSS, so a class that is never defined silently leaves an
+  // empty warning box on screen while the assertion still passes.
   const mismatch = await page.evaluate(() => {
     const n = document.getElementById('mismatch');
     return {
-      hidden: n.classList.contains('hidden'),
+      display: getComputedStyle(n).display,
       text: n.textContent.trim(),
       provenance: document.getElementById('provenance').textContent,
     };
   });
+  const mismatchVisible = mismatch.display !== 'none';
   if (videoArg) {
-    check('caption/media length mismatch is reported', !mismatch.hidden,
+    check('caption/media length mismatch is reported', mismatchVisible,
           mismatch.text || '(no warning shown)');
     check('provenance survives alongside the warning', /measured/.test(mismatch.provenance));
   } else {
-    check('no spurious mismatch warning on the demo', mismatch.hidden, mismatch.text);
+    check('no spurious mismatch box when captions fit', !mismatchVisible,
+          `display=${mismatch.display} text=${JSON.stringify(mismatch.text)}`);
   }
+
+  // Every element that should be hidden must actually compute to display:none.
+  // Checks computed visibility, not the presence of the `hidden` class: this
+  // page uses plain CSS, so a class or attribute that is never honoured leaves
+  // an empty overlay on screen while a class-based assertion still passes.
+  const strayBoxes = await page.evaluate(() => {
+    const out = [];
+    for (const sel of ['#mismatch', '#emptyMsg', '#uploadBar']) {
+      for (const el of document.querySelectorAll(sel)) {
+        if (getComputedStyle(el).display !== 'none' && !el.textContent.trim()) {
+          out.push(sel + ' visible while empty');
+        }
+      }
+    }
+    // The placeholder is meant to show when there is no video, and must be gone
+    // once one is attached.
+    const ph = document.getElementById('placeholder');
+    const phShown = getComputedStyle(ph).display !== 'none';
+    if (captionsApp.state.hasVideo && phShown) out.push('placeholder still shown over the video');
+    if (!captionsApp.state.hasVideo && !phShown) out.push('placeholder hidden but no video to show');
+    return out;
+  });
+  check('no stray boxes, and the placeholder tracks video presence',
+        strayBoxes.length === 0, strayBoxes.join('; '));
 
   // --- words must not visually collide ---------------------------------
   // Regression guard: words once ran together as "TheBrownsare" because the

@@ -8,6 +8,13 @@
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@600&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
+  /* This page uses plain CSS, not Tailwind, so `hidden` has to be honoured
+     explicitly. Two forms were being silently ignored:
+       - the `.hidden` class, which does not exist without Tailwind
+       - the `hidden` *attribute*, because a class like `.empty{display:flex}`
+         outranks the UA stylesheet's `[hidden]{display:none}`
+     Either way an empty overlay was left sitting on top of the video. */
+  .hidden,[hidden]{display:none !important}
   body{background:#0a0a0f;color:#fff;font-family:'Inter',system-ui,sans-serif;min-height:100vh}
   .glass{background:rgba(255,255,255,0.06);backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,0.12)}
   button{font-family:inherit}
@@ -140,6 +147,42 @@
 
 <main>
   <section>
+    <div class="card glass" id="sourceCard" style="margin-bottom:16px">
+      <div id="dropZone"
+           style="border:2px dashed rgba(255,255,255,0.18);background:rgba(0,0,0,0.25);
+                  border-radius:12px;padding:22px;text-align:center;cursor:pointer;
+                  transition:border-color .2s,background .2s">
+        <div style="font-size:26px">&#127916;</div>
+        <div style="font-weight:600;font-size:13px;margin-top:4px">
+          Drop a video here or <span style="color:#a78bfa;text-decoration:underline">browse</span>
+        </div>
+        <div style="font-size:11px;color:rgba(255,255,255,0.4);margin-top:4px">
+          mp4 &middot; mov &middot; webm &mdash; up to 3 minutes, 200 MB
+        </div>
+        <input type="file" id="fileInput" accept="video/mp4,video/quicktime,video/webm,.mp4,.mov,.webm" hidden>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-top:10px;flex-wrap:wrap">
+        <span style="font-size:11px;color:rgba(255,255,255,0.5)">or a direct video link</span>
+        <input id="urlInput" type="url" placeholder="https://example.com/lesson.mp4"
+               style="flex:1;min-width:180px;background:rgba(0,0,0,0.35);color:#fff;
+                      border:1px solid rgba(255,255,255,0.18);border-radius:7px;
+                      padding:7px 9px;font-size:12px">
+        <button id="urlBtn" style="background:rgba(255,255,255,0.08);border:1px solid rgba(255,255,255,0.18);
+                color:#fff;border-radius:8px;padding:7px 13px;font-size:12px;cursor:pointer">Fetch</button>
+      </div>
+      <div id="uploadBar" hidden style="margin-top:12px">
+        <div style="display:flex;justify-content:space-between;font-size:11px;margin-bottom:4px">
+          <span id="uploadMsg" style="color:rgba(255,255,255,0.6)">Working&hellip;</span>
+          <button id="cancelBtn" style="background:rgba(220,38,38,0.6);border:none;color:#fff;
+                  border-radius:6px;padding:3px 9px;font-size:11px;cursor:pointer">Cancel</button>
+        </div>
+        <div style="background:rgba(0,0,0,0.35);border-radius:999px;height:5px;overflow:hidden">
+          <div id="uploadFill" style="background:#8b5cf6;height:100%;width:0%;transition:width .3s"></div>
+        </div>
+      </div>
+      <div id="sourceStatus" style="font-size:11px;color:rgba(255,255,255,0.5);margin-top:8px"></div>
+    </div>
+
     <div class="stage" id="stage">
       <video id="video" playsinline preload="metadata"></video>
       <div class="stage-placeholder" id="placeholder">
@@ -243,7 +286,178 @@ const el = {
   pos: document.getElementById('pos'),
   reducedMotion: document.getElementById('reducedMotion'),
   highContrast: document.getElementById('highContrast'),
+  dropZone: document.getElementById('dropZone'),
+  fileInput: document.getElementById('fileInput'),
+  urlInput: document.getElementById('urlInput'),
+  urlBtn: document.getElementById('urlBtn'),
+  uploadBar: document.getElementById('uploadBar'),
+  uploadMsg: document.getElementById('uploadMsg'),
+  uploadFill: document.getElementById('uploadFill'),
+  cancelBtn: document.getElementById('cancelBtn'),
+  sourceStatus: document.getElementById('sourceStatus'),
 };
+
+let currentXhr = null;
+let pollTimer = null;
+
+function setSourceStatus(msg, kind) {
+  el.sourceStatus.textContent = msg || '';
+  el.sourceStatus.style.color = kind === 'err' ? '#f87171'
+    : kind === 'ok' ? '#86efac'
+    : kind === 'warn' ? '#fcd34d'
+    : 'rgba(255,255,255,0.5)';
+}
+
+function setProgress(pct, msg) {
+  el.uploadBar.hidden = false;
+  el.uploadFill.style.width = pct + '%';
+  el.uploadMsg.textContent = msg;
+}
+
+function stopPolling() {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+}
+
+function resetSourceCard() {
+  el.uploadBar.hidden = true;
+  el.uploadFill.style.width = '0%';
+  currentXhr = null;
+}
+
+// Poll the job until it finishes, then hand the page its own captions.
+function pollJob(jobId) {
+  const STAGES = {
+    queued: 'Queued', extracting_audio: 'Extracting audio',
+    transcribing: 'Transcribing speech', aligning_captions: 'Building captions',
+  };
+  let lastStage = '';
+  pollTimer = setInterval(async () => {
+    try {
+      const r = await fetch('/api/caption-jobs/' + encodeURIComponent(jobId), { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const job = await r.json();
+      const pct = Math.max(4, Math.min(99, job.progress || 0));
+      const label = STAGES[job.status] || job.status;
+      setProgress(pct, label + '… ' + pct + '%');
+      if (job.status === 'done') {
+        stopPolling();
+        setProgress(100, 'Done — ' + (job.captions ? job.captions.pages + ' pages' : ''));
+        setSourceStatus('Captions ready. The preview below is playing your video.', 'ok');
+        await openJob(jobId);
+        resetSourceCard();
+      } else if (job.status === 'failed') {
+        stopPolling();
+        resetSourceCard();
+        setSourceStatus('Transcription failed: ' + (job.error || 'unknown error'), 'err');
+      } else if (job.status !== lastStage) {
+        lastStage = job.status;
+      }
+    } catch (e) {
+      stopPolling();
+      resetSourceCard();
+      setSourceStatus('Lost contact with the server: ' + e.message, 'err');
+    }
+  }, 1200);
+}
+
+function postJob(url, headers, body, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    currentXhr = xhr;
+    xhr.open('POST', url, true);
+    for (const k in headers) xhr.setRequestHeader(k, headers[k]);
+    if (onProgress) {
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+    }
+    xhr.onload = () => {
+      currentXhr = null;
+      if (xhr.status >= 200 && xhr.status < 300) {
+        try { resolve(JSON.parse(xhr.responseText)); }
+        catch (e) { reject(new Error('Server sent an unreadable reply')); }
+      } else {
+        let detail = 'HTTP ' + xhr.status;
+        try { detail = JSON.parse(xhr.responseText).detail || detail; } catch (e) {}
+        reject(new Error(detail));
+      }
+    };
+    xhr.onerror = () => { currentXhr = null; reject(new Error('Network error')); };
+    xhr.onabort = () => { currentXhr = null; reject(new Error('Cancelled')); };
+    xhr.send(body);
+  });
+}
+
+async function uploadFile(file) {
+  if (!file) return;
+  setSourceStatus('');
+  setProgress(0, 'Uploading ' + file.name + '…');
+  try {
+    const res = await postJob(
+      '/api/caption-jobs',
+      { 'X-Filename': file.name, 'Content-Type': 'application/octet-stream' },
+      file,
+      (pct) => setProgress(pct, 'Uploading ' + file.name + '… ' + pct + '%')
+    );
+    setProgress(6, 'Queued…');
+    setSourceStatus('Job ' + res.job_id + ' — ' + (res.durationS || '?') + 's, ' +
+                    (res.resolution || '?') + '. Transcribing now.', 'ok');
+    pollJob(res.job_id);
+  } catch (e) {
+    resetSourceCard();
+    if (e.message !== 'Cancelled') setSourceStatus('Upload rejected: ' + e.message, 'err');
+    else setSourceStatus('Upload cancelled.', 'warn');
+  }
+}
+
+async function submitUrl() {
+  const url = el.urlInput.value.trim();
+  if (!url) { setSourceStatus('Enter a link to a video file first.', 'warn'); return; }
+  setSourceStatus('');
+  setProgress(20, 'Fetching link…');
+  try {
+    const res = await postJob('/api/caption-jobs', { 'Content-Type': 'application/json' },
+                               JSON.stringify({ url }));
+    setProgress(6, 'Queued…');
+    setSourceStatus('Job ' + res.job_id + ' — ' + (res.durationS || '?') + 's. Transcribing now.', 'ok');
+    pollJob(res.job_id);
+  } catch (e) {
+    resetSourceCard();
+    if (e.message !== 'Cancelled') setSourceStatus('Link rejected: ' + e.message, 'err');
+  }
+}
+
+el.dropZone.addEventListener('click', (e) => {
+  if (e.target.closest('#cancelBtn')) return;
+  el.fileInput.click();
+});
+el.dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  el.dropZone.style.borderColor = '#8b5cf6';
+  el.dropZone.style.background = 'rgba(139,92,246,0.12)';
+});
+el.dropZone.addEventListener('dragleave', () => {
+  el.dropZone.style.borderColor = '';
+  el.dropZone.style.background = '';
+});
+el.dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  el.dropZone.style.borderColor = '';
+  el.dropZone.style.background = '';
+  uploadFile(e.dataTransfer.files[0]);
+});
+el.fileInput.addEventListener('change', () => {
+  uploadFile(el.fileInput.files[0]);
+  el.fileInput.value = '';
+});
+el.urlBtn.addEventListener('click', submitUrl);
+el.urlInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') submitUrl(); });
+el.cancelBtn.addEventListener('click', () => {
+  if (currentXhr) { try { currentXhr.abort(); } catch (e) {} }
+  stopPolling();
+  resetSourceCard();
+  setSourceStatus('Cancelled.', 'warn');
+});
 
 const LOW_CONFIDENCE = 0.5;
 
@@ -304,13 +518,27 @@ function renderProvenance(captions) {
   el.provenance.innerHTML = parts.join(' ');
 }
 
+// Point the page at a completed caption job: update the URL (so the view is
+// shareable and survives a refresh), then load its artifacts.
+async function openJob(jobId) {
+  const url = new URL(location.href);
+  url.searchParams.set('job', jobId);
+  url.searchParams.delete('video');
+  history.replaceState(null, '', url);
+  state.drawnPage = -1;
+  state.drawnWord = -1;
+  el.plate.classList.remove('visible');
+  el.words.innerHTML = '';
+  await loadCaptions();
+}
+
 async function loadCaptions() {
   const params = new URLSearchParams(location.search);
   const job = params.get('job');
   const video = params.get('video');
   const bust = Date.now();
   const url = job
-    ? 'jobs/' + encodeURIComponent(job) + '/captions.json?t=' + bust
+    ? 'caption-jobs/' + encodeURIComponent(job) + '/captions.json?t=' + bust
     : 'captions-demo/captions.json?t=' + bust;
 
   el.jobBadge.textContent = job || 'demo';
@@ -366,8 +594,8 @@ async function maybeLoadVideo(job, forced) {
     candidates.push(forced);
   } else if (job) {
     candidates.push(
-      'jobs/' + encodeURIComponent(job) + '/source.mp4',
-      'jobs/' + encodeURIComponent(job) + '/input.mp4'
+      'caption-jobs/' + encodeURIComponent(job) + '/source.mp4',
+      'caption-jobs/' + encodeURIComponent(job) + '/input.mp4'
     );
   }
   for (const src of candidates) {
