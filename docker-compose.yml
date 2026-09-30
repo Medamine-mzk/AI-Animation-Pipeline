@@ -1,0 +1,35 @@
+# Local deployment.  docker compose up -d
+#
+# The HF_TOKEN is passed at *runtime*, never baked into the image. Put it in a
+# local .env (already gitignored):
+#
+#   cp .env.example .env      then fill in HF_TOKEN
+#
+# Models land in the `models` volume and are downloaded once, on first use.
+
+services:
+  captions:
+    build: .
+    image: ai-animation-pipeline:latest
+    container_name: ai-animation-pipeline
+    restart: unless-stopped
+    ports:
+      # Bound to localhost by default. Change to "8000:8000" only if you
+      # intend to expose it to the network -- this app has no authentication.
+      - "127.0.0.1:8000:8000"
+    environment:
+      HF_TOKEN: ${HF_TOKEN:-}
+      NIM_MODELS: ${NIM_MODELS:-}
+    volumes:
+      - models:/models
+      # Uploads and generated captions, so they survive a rebuild.
+      - ./jobs_captions:/app/jobs_captions
+    # WhisperX on CPU is memory hungry; the default 2 GB is not enough.
+    shm_size: "1gb"
+    deploy:
+      resources:
+        limits:
+          memory: 6G
+
+volumes:
+  models:

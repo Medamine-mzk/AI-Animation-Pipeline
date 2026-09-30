@@ -1388,6 +1388,14 @@ async def anim_settings():
     return FileResponse(str(ROOT / "animation-settings.html"))
 
 
+# Static mounts. The directories are created first on purpose: jobs/, media/ and
+# assets/ are all gitignored, so on a fresh clone they are absent and StaticFiles
+# raises "Directory does not exist" *at import time* -- the server then refuses
+# to start at all, which reads as a broken repository rather than missing data.
+# Creating them is cheap and lets the app boot before any content is added.
+for _mount in ("assets", "jobs", "app", "tools", "media", "jobs_captions"):
+    (ROOT / _mount).mkdir(parents=True, exist_ok=True)
+
 app.mount("/assets", StaticFiles(directory=str(ROOT / "assets")), name="assets")
 app.mount("/jobs", StaticFiles(directory=str(ROOT / "jobs")), name="jobs")
 app.mount("/app", StaticFiles(directory=str(ROOT / "app")), name="app")

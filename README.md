@@ -354,6 +354,10 @@ python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000
 
 Puis ouvrir <http://127.0.0.1:8000/>.
 
+> 📘 **[DEPLOYMENT.md](DEPLOYMENT.md)** — déploiement sur un serveur de
+> l'établissement, un VPS, ou Docker ; configuration du reverse-proxy, sauvegardes,
+> et tableau de diagnostic.
+
 ### 6.4 Tests
 
 ```bash
