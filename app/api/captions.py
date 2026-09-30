@@ -35,7 +35,9 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from pydantic import ValidationError
 
+from app.pipeline.captions import summary
 from app.pipeline.caption_source import (
     DEFAULT_MAX_DURATION_S,
     SourceRejected,
@@ -43,6 +45,7 @@ from app.pipeline.caption_source import (
     ingest_url,
     new_job_dir,
 )
+from app.schemas.captions import CaptionSet
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 DEMO_DIR = ROOT / "captions_demo"
@@ -292,8 +295,87 @@ def list_caption_jobs():
     return out
 
 
-@router.get("/api/caption-jobs/{job_id}")
-def get_caption_job(job_id: str):
+@router.get("/api/caption-jobs/{job_id}/captions")
+def get_captions(job_id: str):
+    """Serve the caption set, bypassing the static mount's caching.
+
+    The editor and the renderer both need the current version, and a stale cached
+    captions.json after an edit is exactly the "looks different after export"
+    failure the design warns about.
+    """
+    _require_caption_job(job_id)
+    path = _job_dir(job_id) / "captions.json"
+    if not path.exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"caption job {job_id} has no captions yet (status: "
+                   f"{_read_meta(job_id).get('status', 'unknown')})",
+        )
+    return FileResponse(str(path), media_type="application/json",
+                        headers={"Cache-Control": "no-store"})
+
+
+@router.put("/api/caption-jobs/{job_id}/captions")
+async def put_captions(job_id: str, request: Request):
+    """Persist transcript corrections.
+
+    This is what makes the preview and the eventual export agree: the export
+    renders from the file this writes, so an edit the user did not save would
+    come back with the old wording baked in. The payload is validated against the
+    same schema as everything else, so a bad edit is refused with a reason
+    instead of producing a caption set the renderer cannot draw.
+
+    Text is the thing users fix. Timings are accepted too, but the pagination
+    grouping is not recomputed: changing a word's text cannot change which words
+    share a page, only how they wrap, so a text swap is sufficient and a
+    re-pagination would silently move every later caption.
+    """
+    _require_caption_job(job_id)
+    if not (_job_dir(job_id) / "captions.json").exists():
+        raise HTTPException(
+            status_code=409,
+            detail=f"caption job {job_id} has no captions to edit yet (status: "
+                   f"{_read_meta(job_id).get('status', 'unknown')})",
+        )
+
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise HTTPException(status_code=400, detail="body is not valid JSON") from exc
+
+    try:
+        edited = CaptionSet.model_validate(body)
+    except ValidationError as exc:
+        # Surface the first human-readable message rather than a pydantic dump.
+        first = exc.errors()[0] if exc.errors() else {}
+        detail = first.get("msg", "caption data is not valid")
+        raise HTTPException(status_code=400, detail=f"invalid caption data: {detail}") from exc
+
+    blanks = [
+        f"page {p.index} word {i}"
+        for p in edited.pages
+        for i, w in enumerate(p.words)
+        if not w.displayText
+    ]
+    if blanks:
+        raise HTTPException(
+            status_code=400,
+            detail="a word cannot be empty (" + ", ".join(blanks[:3])
+                   + ("..." if len(blanks) > 3 else "") + ")",
+        )
+
+    path = _job_dir(job_id) / "captions.json"
+    # Write via a temp file so an interrupted save cannot leave a truncated,
+    # unloadable captions.json behind.
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(edited.model_dump_json(indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+    _update(job_id, captions=summary(edited), editedAt=time.time())
+    return {"ok": True, "pages": len(edited.pages), "wordCount": edited.wordCount}
+
+
+def _require_caption_job(job_id: str) -> None:
     if not job_id.startswith("cap_"):
         raise HTTPException(
             status_code=400,
@@ -301,6 +383,11 @@ def get_caption_job(job_id: str):
         )
     if not _job_dir(job_id).exists():
         raise HTTPException(status_code=404, detail=f"caption job {job_id} not found")
+
+
+@router.get("/api/caption-jobs/{job_id}")
+def get_caption_job(job_id: str):
+    _require_caption_job(job_id)
     meta = _read_meta(job_id)
     if not meta:
         raise HTTPException(

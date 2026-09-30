@@ -133,6 +133,27 @@
 
   .empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
          color:rgba(255,255,255,0.4);font-size:13px;text-align:center;padding:24px;z-index:6}
+
+  /* ------------------------------------------------------------- editor */
+  .pg{border-radius:9px;padding:8px 9px;background:rgba(255,255,255,0.035);
+      border:1px solid rgba(255,255,255,0.07)}
+  .pg.active{border-color:rgba(139,92,246,0.55);background:rgba(139,92,246,0.09)}
+  .pg-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;
+           font-size:10px;color:rgba(255,255,255,0.4);font-variant-numeric:tabular-nums}
+  .pg-who{display:flex;align-items:center;gap:5px;font-weight:700;letter-spacing:.04em;
+          text-transform:uppercase}
+  .pg-who .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .words{display:flex;flex-wrap:wrap;gap:4px}
+  .wi{font:inherit;font-size:12px;width:7.4ch;min-width:4ch;padding:3px 5px;border-radius:6px;
+      background:rgba(0,0,0,0.35);color:#fff;border:1px solid transparent;text-align:center}
+  .wi:focus{outline:none;border-color:#8b5cf6;background:rgba(139,92,246,0.16)}
+  .wi.flagged{border-color:rgba(252,211,77,0.55);background:rgba(252,211,77,0.10)}
+  .wi.flagged::after{content:"";}
+  .wi.speaking{border-color:rgba(255,255,255,0.55);background:rgba(255,255,255,0.12)}
+  .ni{font:inherit;font-size:12px;flex:1;min-width:0;padding:4px 7px;border-radius:6px;
+      background:rgba(0,0,0,0.35);color:#fff;border:1px solid rgba(255,255,255,0.14)}
+  .ni:focus{outline:none;border-color:#8b5cf6}
+  .flag-note{font-size:10px;color:#fcd34d;margin:-2px 0 8px;display:flex;align-items:center;gap:5px}
 </style>
 </head>
 <body>
@@ -241,6 +262,20 @@
       <div class="note" id="provenance">Loading&hellip;</div>
       <div class="note warn hidden" id="mismatch" style="margin-top:8px"></div>
     </div>
+
+    <div class="card glass" id="editorCard" hidden>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+        <h2 style="margin:0">Transcript</h2>
+        <span id="editState" class="text-xs" style="color:rgba(255,255,255,0.45)"></span>
+      </div>
+      <p class="text-xs" style="color:rgba(255,255,255,0.45);margin-bottom:10px;line-height:1.5">
+        Fix anything the transcription got wrong. Edits show in the preview
+        immediately and are saved with the video, so the export matches what you
+        see here.
+      </p>
+      <div id="nameEditor" style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px"></div>
+      <div id="transcript" style="max-height:42vh;overflow-y:auto;display:flex;flex-direction:column;gap:10px"></div>
+    </div>
   </aside>
 </main>
 
@@ -260,6 +295,7 @@ const state = {
   video: null,
   hasVideo: false,
   mediaDurationMs: 0,
+  job: null,
   rafId: null,
   lastFrame: 0,
 };
@@ -295,6 +331,10 @@ const el = {
   uploadFill: document.getElementById('uploadFill'),
   cancelBtn: document.getElementById('cancelBtn'),
   sourceStatus: document.getElementById('sourceStatus'),
+  editorCard: document.getElementById('editorCard'),
+  transcript: document.getElementById('transcript'),
+  nameEditor: document.getElementById('nameEditor'),
+  editState: document.getElementById('editState'),
 };
 
 let currentXhr = null;
@@ -496,7 +536,7 @@ function renderLegend(captions) {
     sw.className = 'swatch';
     sw.style.background = style.color;
     const label = document.createElement('span');
-    label.textContent = 'Speaker ' + (style.index + 1) + ' (' + style.speakerId + ')';
+    label.textContent = editor.names[style.speakerId] || ('Speaker ' + (style.index + 1));
     const meta = document.createElement('span');
     meta.className = 'meta';
     meta.textContent = words + ' words · ' + style.contrastRatio + ':1';
@@ -568,11 +608,21 @@ async function loadCaptions() {
   }
 
   state.captions = raw;
+  state.job = job || null;
   state.stylesById = {};
   for (const s of raw.styles) state.stylesById[s.speakerId] = s;
 
+  // Names default to "Speaker N" and persist per job across reloads.
+  editor.names = {};
+  try {
+    const key = 'captions.names.' + (job || 'demo');
+    editor.names = JSON.parse(localStorage.getItem(key) || '{}') || {};
+  } catch (e) { editor.names = {}; }
+
   renderLegend(raw);
   renderProvenance(raw);
+  renderEditor(raw, job);
+  setEditState('', 'ok');
 
   el.emptyMsg.hidden = true;
   el.plate.hidden = false;
@@ -663,7 +713,7 @@ function drawPage(page) {
   el.plate.style.setProperty('--active-color', style.activeColor);
 
   el.tag.hidden = false;
-  el.tagName.textContent = 'Speaker ' + (style.index + 1);
+  el.tagName.textContent = editor.names[page.speakerId] || ('Speaker ' + (style.index + 1));
 
   el.words.innerHTML = '';
   state.pageSpans = [];
@@ -747,6 +797,7 @@ function tick(ts) {
 
   const now = currentTimeMs();
   renderAt(now);
+  try { syncEditorToPlayhead(now); } catch (e) {}
   el.time.textContent = fmt(now) + ' / ' + fmt(state.captions ? state.captions.durationMs : 0);
   if (!scrubbing) el.scrub.value = String(Math.round(now));
 }
@@ -826,6 +877,193 @@ function restoreAppearance() {
   el.highContrast.checked = recall('highContrast', 'false') === 'true';
   document.body.classList.toggle('reduced-motion', el.reducedMotion.checked);
   document.body.classList.toggle('high-contrast', el.highContrast.checked);
+}
+
+// ------------------------------------------------------- transcript editor
+
+// The editor mutates state.captions in place and the renderer reads
+// state.captions every frame, so a corrected word is on screen immediately --
+// there is no second copy of the data to drift out of sync, which is what would
+// cause the "looks different after export" problem the design warns about.
+const editor = {
+  dirty: false,
+  saveTimer: null,
+  inputFor: new Map(),   // "page:word" -> <input>
+  pageEls: new Map(),    // page index -> container
+  names: {},             // speakerId -> display name
+};
+
+function setEditState(msg, kind) {
+  el.editState.textContent = msg;
+  el.editState.style.color = kind === 'err' ? '#f87171'
+    : kind === 'ok' ? '#86efac'
+    : 'rgba(255,255,255,0.45)';
+}
+
+function styleOf(speakerId) {
+  return activeStyle(speakerId);
+}
+
+function renderEditor(captions, job) {
+  el.editorCard.hidden = !job;
+  if (!job) { el.transcript.innerHTML = ''; el.nameEditor.innerHTML = ''; return; }
+
+  // Speaker names, editable. The name is what the caption tag shows.
+  el.nameEditor.innerHTML = '';
+  for (const style of captions.styles) {
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;align-items:center;gap:7px';
+    const dot = document.createElement('span');
+    dot.style.cssText = `width:9px;height:9px;border-radius:3px;flex:none;background:${style.color}`;
+    const input = document.createElement('input');
+    input.className = 'ni';
+    input.value = editor.names && editor.names[style.speakerId]
+      ? editor.names[style.speakerId]
+      : 'Speaker ' + (style.index + 1);
+    input.setAttribute('aria-label', 'Name for ' + style.speakerId);
+    input.oninput = () => {
+      editor.names[style.speakerId] = input.value.trim() || ('Speaker ' + (style.index + 1));
+      try {
+        localStorage.setItem('captions.names.' + (state.job || 'demo'),
+                             JSON.stringify(editor.names));
+      } catch (e) {}
+      markDirty();
+      // The on-screen tag, the legend and the transcript all read this table.
+      el.tagName.textContent = editor.names[style.speakerId];
+      const legendLabel = row.querySelector('span:nth-child(2)');
+      if (legendLabel) legendLabel.textContent = editor.names[style.speakerId];
+      for (const [pIndex, box] of editor.pageEls) {
+        const page = state.captions.pages.find((p) => p.index === pIndex);
+        if (page && page.speakerId === style.speakerId) {
+          const who = box.querySelector('.pg-who');
+          if (who) {
+            who.innerHTML = '<span class="dot"></span>' + editor.names[style.speakerId];
+            who.style.color = style.color;
+          }
+        }
+      }
+    };
+    row.append(dot, input);
+    el.nameEditor.appendChild(row);
+  }
+
+  const flagged = captions.pages.reduce(
+    (n, p) => n + p.words.filter((w) => typeof w.confidence === 'number' && w.confidence < LOW_CONFIDENCE).length,
+    0
+  );
+
+  editor.inputFor.clear();
+  editor.pageEls.clear();
+  el.transcript.innerHTML = '';
+
+  if (flagged > 0) {
+    const note = document.createElement('div');
+    note.className = 'flag-note';
+    note.textContent = flagged + ' low-confidence word' + (flagged === 1 ? '' : 's')
+      + ' (underlined) — worth checking';
+    el.transcript.appendChild(note);
+  }
+
+  captions.pages.forEach((page) => {
+    const style = styleOf(page.speakerId);
+    const box = document.createElement('div');
+    box.className = 'pg';
+    box.dataset.page = String(page.index);
+
+    const head = document.createElement('div');
+    head.className = 'pg-head';
+    const who = document.createElement('span');
+    who.className = 'pg-who';
+    who.style.color = style.color;
+    who.innerHTML = '<span class="dot"></span>' +
+      (editor.names[page.speakerId] || ('Speaker ' + (style.index + 1)));
+    const t = document.createElement('span');
+    t.textContent = fmt(page.startMs) + ' – ' + fmt(page.endMs) + '  (' + page.words.length + ' words)';
+    head.append(who, t);
+    box.appendChild(head);
+
+    const row = document.createElement('div');
+    row.className = 'words';
+    page.words.forEach((word, i) => {
+      const input = document.createElement('input');
+      input.className = 'wi';
+      // NB: `word.displayText` exists on the Python model but is a pydantic
+      // property, so it is NOT in the JSON. Reading it here silently yields
+      // "undefined" in every input. The stored field is `text`, which carries a
+      // leading space on all but the first word of a run.
+      input.value = String(word.text || '').trim();
+      input.setAttribute('aria-label', 'Page ' + page.index + ' word ' + (i + 1));
+      if (typeof word.confidence === 'number' && word.confidence < LOW_CONFIDENCE) {
+        input.classList.add('flagged');
+        input.title = 'Low confidence (' + word.confidence.toFixed(2) + ')';
+      }
+      input.oninput = () => {
+        // Same object the renderer draws from, so the preview updates with no
+        // extra plumbing and cannot drift from what will be exported.
+        word.text = i === 0 ? input.value : ' ' + input.value;
+        if (state.drawnPage === page.index) drawPage(page);
+        markDirty();
+      };
+      editor.inputFor.set(page.index + ':' + i, input);
+      row.appendChild(input);
+    });
+    box.appendChild(row);
+    editor.pageEls.set(page.index, box);
+    el.transcript.appendChild(box);
+  });
+}
+
+function markDirty() {
+  editor.dirty = true;
+  setEditState('● unsaved', 'warn');
+  if (editor.saveTimer) clearTimeout(editor.saveTimer);
+  editor.saveTimer = setTimeout(saveEdits, 900);
+}
+
+async function saveEdits() {
+  if (!editor.dirty || !state.job) return;
+  const job = state.job;
+  setEditState('saving…', 'warn');
+  try {
+    const r = await fetch('/api/caption-jobs/' + encodeURIComponent(job) + '/captions', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      cache: 'no-store',
+      body: JSON.stringify(state.captions),
+    });
+    if (!r.ok) {
+      let detail = 'HTTP ' + r.status;
+      try { detail = (await r.json()).detail || detail; } catch (e) {}
+      setEditState('not saved: ' + detail, 'err');
+      return;
+    }
+    editor.dirty = false;
+    setEditState('✓ saved ' + new Date().toLocaleTimeString(), 'ok');
+  } catch (e) {
+    setEditState('not saved: ' + e.message, 'err');
+  }
+}
+
+// Highlight the transcript row matching what is on screen, and the word.
+function syncEditorToPlayhead(timeMs) {
+  if (editor.pageEls.size === 0) return;
+  for (const [index, box] of editor.pageEls) {
+    const page = state.captions.pages.find((p) => p.index === index);
+    const on = !!page && timeMs >= page.startMs && timeMs < page.endMs;
+    box.classList.toggle('active', on);
+    if (!on) {
+      for (const input of box.querySelectorAll('.wi.speaking')) {
+        input.classList.remove('speaking');
+      }
+      continue;
+    }
+    const speaking = wordIndexIn(page, timeMs);
+    for (const input of box.querySelectorAll('.wi')) {
+      const key = input.getAttribute('aria-label');
+      const m = /word (\d+)$/.exec(key || '');
+      input.classList.toggle('speaking', !!m && Number(m[1]) - 1 === speaking);
+    }
+  }
 }
 
 restoreAppearance();

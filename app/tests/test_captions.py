@@ -43,7 +43,7 @@ TIMELINE_PAYLOAD = {
         {"text": " there", "startMs": 300, "endMs": 600, "speakerId": "SPEAKER_00"},
         {"text": " friend", "startMs": 600, "endMs": 900, "speakerId": "SPEAKER_00"},
         # B: 2 words 1.0-1.6
-        {"text": "Hi", "startMs": 1000, "endMs": 1200, "speakerId": "SPEAKER_01"},
+        {"text": " Hi", "startMs": 1000, "endMs": 1200, "speakerId": "SPEAKER_01"},
         {"text": " Chris", "startMs": 1200, "endMs": 1600, "speakerId": "SPEAKER_01"},
         # long silence 1.6 - 12.0
         # A again, 10 words -> must split into multiple pages
@@ -292,6 +292,39 @@ def test_unscored_words_are_not_treated_as_low_confidence():
     # would make the editor's underline meaningless.
     cs = build_caption_set(make_timeline())
     assert low_confidence_words(cs) == []
+
+
+def test_display_text_is_not_serialized():
+    """Regression trap, documented as a test.
+
+    `PageWord.displayText` is a pydantic property, so it disappears on
+    serialization. The transcript editor read it in JavaScript and every input
+    silently rendered the literal string "undefined", while the burned-in captions
+    looked perfect because they used `text.trim()`. Asserting the key is absent
+    makes the shape of the JSON explicit for any other consumer.
+    """
+    cs = build_caption_set(make_timeline())
+    raw = json.loads(cs.model_dump_json())
+    for page in raw["pages"]:
+        for word in page["words"]:
+            assert "displayText" not in word
+            assert "text" in word
+    # And the Python-side property still works, for server-side callers.
+    assert cs.pages[0].words[1].displayText == "there"
+
+
+def test_first_word_has_no_leading_space_in_json():
+    """The @remotion/captions join convention must survive the round trip, or
+    rendering joins words with no gap."""
+    cs = build_caption_set(make_timeline())
+    raw = json.loads(cs.model_dump_json())
+    words = [w for p in raw["pages"] for w in p["words"]]
+    assert words[0]["text"] == "Hello"
+    assert all(w["text"].startswith(" ") for w in words[1:] if w["text"])
+    # ...and the display form is recoverable by trimming.
+    assert [w["text"].strip() for w in words] == [
+        "Hello", "there", "friend", "Hi", "Chris",
+    ] + [w["text"].strip() for w in words[5:]]
 
 
 def test_summary_reports_counts():

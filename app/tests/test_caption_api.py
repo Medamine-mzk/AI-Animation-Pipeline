@@ -137,6 +137,136 @@ def test_model_size_is_allow_listed(client, tmp_path, monkeypatch):
     assert not any(d.name.startswith("cap_") for d in tmp_path.iterdir() if d.is_dir())
 
 
+# ------------------------------------------------------------- editing
+
+
+@pytest.fixture
+def editable_job(tmp_path, monkeypatch):
+    """A caption job with a finished captions.json, ready to edit."""
+    from app.pipeline.captions import build_caption_set
+    from app.pipeline.word_timeline import build_word_timeline
+
+    monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    d = tmp_path / "cap_edit0001"
+    d.mkdir()
+    (d / "audio.wav").write_bytes(b"RIFFfake")
+    tl = build_word_timeline(
+        [
+            {"word": "Good", "start": 0.1, "end": 0.4, "speaker": "A", "score": 0.9},
+            {"word": "morning", "start": 0.4, "end": 0.9, "speaker": "A", "score": 0.9},
+            {"word": "professor", "start": 1.0, "end": 1.7, "speaker": "B", "score": 0.4},
+        ],
+        language="en",
+        duration_s=2.0,
+    )
+    cs = build_caption_set(tl)
+    (d / "captions.json").write_text(cs.model_dump_json(indent=2), encoding="utf-8")
+    (d / "meta.json").write_text(
+        json.dumps({"id": "cap_edit0001", "status": "done"}), encoding="utf-8"
+    )
+    return d
+
+
+def read_caps(d):
+    return json.loads((d / "captions.json").read_text(encoding="utf-8"))
+
+
+def test_edits_persist_and_are_readable(client, editable_job):
+    caps = read_caps(editable_job)
+    caps["pages"][0]["words"][0]["text"] = "Evening"
+
+    r = client.put("/api/caption-jobs/cap_edit0001/captions", json=caps)
+    assert r.status_code == 200, r.text
+    assert r.json()["ok"] is True
+
+    # The export reads this file, so the edit must be on disk, not just in memory.
+    assert read_caps(editable_job)["pages"][0]["words"][0]["text"] == "Evening"
+
+    r = client.get("/api/caption-jobs/cap_edit0001/captions")
+    assert r.status_code == 200
+    assert json.loads(r.text)["pages"][0]["words"][0]["text"] == "Evening"
+    assert r.headers.get("cache-control") == "no-store"
+
+
+def test_edit_keeps_word_timings_untouched(client, editable_job):
+    """A text fix must not disturb sync -- the timings are what make the
+    highlight work, and re-deriving them from text would break it."""
+    caps = read_caps(editable_job)
+    before = [(w["startMs"], w["endMs"]) for p in caps["pages"] for w in p["words"]]
+    caps["pages"][0]["words"][0]["text"] = "Totally different length text"
+    client.put("/api/caption-jobs/cap_edit0001/captions", json=caps)
+    after = [(w["startMs"], w["endMs"]) for p in read_caps(editable_job)["pages"] for w in p["words"]]
+    assert before == after
+
+
+def test_edit_records_a_timestamp(client, editable_job):
+    caps = read_caps(editable_job)
+    client.put("/api/caption-jobs/cap_edit0001/captions", json=caps)
+    meta = json.loads((editable_job / "meta.json").read_text(encoding="utf-8"))
+    assert meta.get("editedAt", 0) > 0
+
+
+def test_edit_rejects_blank_word(client, editable_job):
+    caps = read_caps(editable_job)
+    caps["pages"][0]["words"][0]["text"] = "   "
+    r = client.put("/api/caption-jobs/cap_edit0001/captions", json=caps)
+    assert r.status_code == 400
+    assert "empty" in r.json()["detail"].lower()
+    # The previous good version must survive a rejected edit.
+    assert read_caps(editable_job)["pages"][0]["words"][0]["text"] != "   "
+
+
+def test_edit_rejects_inconsistent_word_count(client, editable_job):
+    caps = read_caps(editable_job)
+    caps["wordCount"] = 999
+    r = client.put("/api/caption-jobs/cap_edit0001/captions", json=caps)
+    assert r.status_code == 400
+    assert "invalid caption data" in r.json()["detail"].lower()
+
+
+def test_edit_rejects_overlapping_pages(client, editable_job):
+    caps = read_caps(editable_job)
+    caps["pages"][0]["startMs"] = 0
+    caps["pages"][0]["endMs"] = 99999
+    r = client.put("/api/caption-jobs/cap_edit0001/captions", json=caps)
+    assert r.status_code == 400
+
+
+def test_edit_rejects_malformed_json(client, editable_job):
+    r = client.put(
+        "/api/caption-jobs/cap_edit0001/captions",
+        content=b"{not json",
+        headers={"Content-Type": "application/json"},
+    )
+    assert r.status_code == 400
+
+
+def test_edit_rejects_a_3d_job_id(client, editable_job):
+    caps = read_caps(editable_job)
+    r = client.put("/api/caption-jobs/de988512/captions", json=caps)
+    assert r.status_code == 400
+
+
+def test_edit_on_a_job_with_no_captions_is_409(client, tmp_path, monkeypatch):
+    monkeypatch.setattr(captions_api, "JOBS", tmp_path)
+    d = tmp_path / "cap_pending01"
+    d.mkdir()
+    (d / "meta.json").write_text(
+        json.dumps({"id": d.name, "status": "transcribing"}), encoding="utf-8"
+    )
+    r = client.put(f"/api/caption-jobs/{d.name}/captions", json={"pages": []})
+    assert r.status_code == 409
+    assert "transcribing" in r.json()["detail"]
+
+
+def test_rejected_edit_leaves_no_temp_file(client, editable_job):
+    caps = read_caps(editable_job)
+    caps["pages"][0]["words"][0]["text"] = ""
+    client.put("/api/caption-jobs/cap_edit0001/captions", json=caps)
+    leftovers = [p.name for p in editable_job.iterdir() if p.name.endswith(".tmp")]
+    assert leftovers == [], f"interrupted save left {leftovers}"
+
+
 # ---------------------------------------------------------------- isolation
 
 

@@ -73,9 +73,39 @@ try {
   page.on('pageerror', (e) => consoleErrors.push('pageerror: ' + e.message + '\n    ' + (e.stack || '')));
 
   await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+  await page.waitForFunction(() => window.captionsApp && window.captionsApp.state.captions,
+                             { timeout: 15000 });
 
-  // --- data loaded ------------------------------------------------------
-  await page.waitForFunction(() => window.captionsApp && window.captionsApp.state.captions, { timeout: 15000 });
+  // Snapshot the real captions now that the page has loaded, before anything
+  // writes. The editor checks below deliberately PUT to the server, so without
+  // this the harness would leave a real job containing the word "CORRECTED" and a
+  // renamed speaker.
+  let pristine = null;
+  if (jobArg) {
+    pristine = await page.evaluate(async (jid) => {
+      const r = await fetch('/caption-jobs/' + jid + '/captions.json?t=' + Date.now(),
+                            { cache: 'no-store' });
+      return r.ok ? await r.text() : null;
+    }, jobArg);
+    if (!pristine) throw new Error('could not snapshot captions.json to restore later');
+  }
+
+  const restore = async () => {
+    if (!pristine) return;
+    const ok = await page.evaluate(async (jid, text) => {
+      const r = await fetch('/api/caption-jobs/' + jid + '/captions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: text,
+      });
+      return r.ok;
+    }, jobArg, pristine).catch(() => false);
+    console.log(ok
+      ? "\nrestored the job's captions.json to its pre-test state"
+      : "\nWARNING: could not restore captions.json -- re-run the job if the wording looks wrong");
+  };
+
   const info = await page.evaluate(() => ({
     pages: captionsApp.state.captions.pages.length,
     styles: captionsApp.state.captions.styles.length,
@@ -325,6 +355,126 @@ try {
           `${c.words} words, min gap ${c.minGap}px`);
   }
 
+  // --- transcript editor -------------------------------------------------
+  if (jobArg) {
+    const ed = await page.evaluate(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const card = document.getElementById('editorCard');
+      const out = { shown: !card.classList.contains('hidden') && card.offsetHeight > 0 };
+
+      // Seek into the first page so the preview is showing it.
+      const p0 = captionsApp.state.captions.pages[0];
+      const t = (p0.words[0].startMs + p0.words[0].endMs) / 2;
+      const v = document.getElementById('video');
+      if (captionsApp.state.hasVideo) {
+        await new Promise((res) => {
+          const on = () => { v.removeEventListener('seeked', on); res(); };
+          v.addEventListener('seeked', on); v.currentTime = t / 1000;
+        });
+      } else { captionsApp.state.timeMs = t; }
+      await sleep(150);
+
+      out.pageBoxes = document.querySelectorAll('.pg').length;
+      out.wordInputs = document.querySelectorAll('.wi').length;
+      out.inputValues = [...document.querySelectorAll('.wi')].map((i) => i.value);
+      out.nameValues = [...document.querySelectorAll('.ni')].map((i) => i.value);
+      out.activePageBox = document.querySelectorAll('.pg.active').length;
+      out.speakingMarked = document.querySelectorAll('.wi.speaking').length;
+      out.flagged = document.querySelectorAll('.wi.flagged').length;
+      out.flagNote = document.querySelector('.flag-note')
+        ? document.querySelector('.flag-note').textContent.trim() : '';
+      out.nameInputs = document.querySelectorAll('.ni').length;
+
+      // Edit the first word and confirm the preview shows the new text.
+      const first = document.querySelector('.wi');
+      out.before = first.value;
+      first.value = 'CORRECTED';
+      first.dispatchEvent(new Event('input', { bubbles: true }));
+      await sleep(150);
+      out.spanText = document.querySelector('#words .w')
+        ? document.querySelector('#words .w').textContent : null;
+      out.modelText = captionsApp.state.captions.pages[0].words[0].text;
+      out.modelFirst = captionsApp.state.captions.pages[0].words[0].text;
+      out.saveState = document.getElementById('editState').textContent;
+      return out;
+    });
+
+    check('editor panel is shown for a real job', ed.shown);
+    check('one transcript block per caption page', ed.pageBoxes > 0, `${ed.pageBoxes} blocks`);
+    check('one input per word', ed.wordInputs > 0, `${ed.wordInputs} inputs`);
+
+    // Regression: reading the Python-only `displayText` property in JS yields
+    // "undefined", which put the literal word "undefined" in every input while
+    // the rendered captions looked perfectly fine.
+    const junk = ed.inputValues.filter(
+      (v) => v === 'undefined' || v === 'null' || v === '' || v === 'NaN');
+    check('every transcript input holds real text, not undefined/null',
+          junk.length === 0, `${junk.length} bad values: ${JSON.stringify(junk.slice(0, 3))}`);
+    const firstInput = ed.inputValues[0] || '';
+    const firstModel = String(ed.modelFirst || '').trim();
+    check('the first input matches the model text', firstInput === firstModel,
+          `input=${JSON.stringify(firstInput)} model=${JSON.stringify(firstModel)}`);
+    const junkNames = ed.nameValues.filter((v) => v === 'undefined' || v === '');
+    check('every speaker-name field holds real text', junkNames.length === 0,
+          JSON.stringify(junkNames));
+
+    check('the on-screen page is marked in the transcript', ed.activePageBox === 1,
+          `${ed.activePageBox} active`);
+    check('the spoken word is marked in the transcript', ed.speakingMarked === 1,
+          `${ed.speakingMarked} marked`);
+    check('speaker names are editable', ed.nameInputs > 0, `${ed.nameInputs} name fields`);
+    check('an edit reaches the rendered caption immediately',
+          ed.spanText === 'CORRECTED', `span shows ${JSON.stringify(ed.spanText)}`);
+    check('an edit reaches the shared model', ed.modelText === 'CORRECTED', ed.modelText);
+    check('editing marks the save state', /unsaved|saving/i.test(ed.saveState), ed.saveState);
+
+    // Wait for the debounced autosave, then confirm it reached the server.
+    // NB: match on the tick, not /saved/i -- that also matches "unsaved", which
+    // made a failed save report as a pass.
+    const saved = await page.evaluate(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      for (let i = 0; i < 40; i++) {
+        await sleep(250);
+        const s = document.getElementById('editState').textContent;
+        if (/not saved/i.test(s)) return { state: s, ok: false };
+        if (/^\u2713/.test(s.trim())) return { state: s, ok: true };
+      }
+      return { state: document.getElementById('editState').textContent, ok: false };
+    });
+    check('the edit is persisted to the server', saved.ok, saved.state);
+
+    const onDisk = await page.evaluate(async (jid) => {
+      const r = await fetch('/caption-jobs/' + jid + '/captions.json?t=' + Date.now(),
+                            { cache: 'no-store' });
+      if (!r.ok) return { status: r.status, text: null };
+      const j = await r.json();
+      return { status: r.status, text: j.pages[0].words[0].text };
+    }, jobArg);
+    check('the exported data carries the correction', onDisk.text === 'CORRECTED',
+          `HTTP ${onDisk.status} first word = ${JSON.stringify(onDisk.text)}`);
+
+    // Rename a speaker and confirm the on-screen tag follows.
+    const renamed = await page.evaluate(async () => {
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const ni = document.querySelector('.ni');
+      ni.value = 'Professor Adams';
+      ni.dispatchEvent(new Event('input', { bubbles: true }));
+      await sleep(150);
+      const p0 = captionsApp.state.captions.pages[0];
+      const t = (p0.words[0].startMs + p0.words[0].endMs) / 2;
+      const v = document.getElementById('video');
+      if (captionsApp.state.hasVideo) { v.currentTime = t / 1000; } else { captionsApp.state.timeMs = t; }
+      await sleep(150);
+      return { tag: document.getElementById('tag').textContent.trim() };
+    });
+    check('a renamed speaker appears in the caption tag',
+          /Professor Adams/.test(renamed.tag), JSON.stringify(renamed.tag));
+  } else {
+    check('editor hidden on the demo (nothing to persist to)',
+          await page.evaluate(() =>
+            document.getElementById('editorCard').classList.contains('hidden')));
+  }
+
   // --- 2 lines at the largest size ------------------------------------
   const overflow = await page.evaluate(() => {
     const s = document.getElementById('size');
@@ -375,6 +525,8 @@ try {
   }
 
   check('no console errors', consoleErrors.length === 0, consoleErrors.slice(0, 3).join(' | '));
+
+  await restore();
 
   console.log('\n' + (failures.length ? `FAILED (${failures.length}):\n- ` + failures.join('\n- ')
                                    : 'ALL BROWSER CHECKS PASSED'));

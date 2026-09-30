@@ -20,7 +20,15 @@ WordAlignment = Literal["measured"]
 
 
 class PageWord(BaseModel):
-    """One word inside a page, carrying the timing the highlighter needs."""
+    """One word inside a page, carrying the timing the highlighter needs.
+
+    ``text`` follows the ``@remotion/captions`` convention of carrying a leading
+    space on all but the first word of a run. :attr:`displayText` is a derived
+    convenience for Python callers and is deliberately *not* serialized -- a
+    second copy of the same string in the JSON would be one more thing to keep in
+    step. Browser code must therefore trim ``text`` itself; reading
+    ``displayText`` in JavaScript yields ``undefined``.
+    """
 
     text: str
     startMs: int = Field(ge=0)
