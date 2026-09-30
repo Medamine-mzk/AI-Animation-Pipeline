@@ -37,9 +37,19 @@ class TimelineWord(BaseModel):
     text: str
     startMs: int = Field(ge=0)
     endMs: int = Field(ge=0)
-    timestampMs: int = Field(ge=0)
+    #: When the word is considered "revealed". Defaults to ``startMs``; kept as a
+    #: separate field because ``@remotion/captions`` carries it separately and a
+    #: future effect (e.g. an earlier lead-in) may want to differ.
+    timestampMs: int = Field(default=0, ge=0)
     confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     speakerId: str = Field(min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_timestamp_to_start(cls, data):
+        if isinstance(data, dict) and "timestampMs" not in data:
+            data = {**data, "timestampMs": data.get("startMs", 0)}
+        return data
 
     @field_validator("endMs")
     @classmethod
