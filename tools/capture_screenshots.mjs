@@ -135,13 +135,29 @@ try {
     }
   }
 
-// 9 + 10. The 3D pipeline.
+  // 9 + 10. The 3D pipeline.
   //
+  // Refuse to photograph a job whose dialogue does not match its audio. Two of
+  // the README's original 3D screenshots were taken from such a job: the images
+  // looked plausible, but the captions belonged to a different recording. A
+  // screenshot that quietly misrepresents the software is worse than none, so the
+  // guard is a hard failure rather than a warning.
+  console.log('3D pipeline (headed, for real GPU rendering):');
+  const jobState = await (await fetch(
+    `${BASE}/api/jobs/${PIPE_JOB}`, { cache: 'no-store' })).json();
+  const cons = jobState && jobState.consistency;
+  if (cons && cons.ok === false) {
+    throw new Error(
+      `refusing to screenshot job ${PIPE_JOB}: ${cons.reason}\n` +
+      'Re-transcribe it first (POST /api/jobs/{id}/retranscribe).');
+  }
+  console.log(`  job ${PIPE_JOB} verified consistent `
+            + `(audio ${cons ? cons.audioS : '?'}s, dialogue ends ${cons ? cons.dialogueEndS : '?'}s)`);
+
   // Captured in a *headed* browser on purpose. The room background is an 87 MB
   // GLB and headless Chrome falls back to software GL, where it never finishes
   // uploading in time -- the screenshot catches the bare ground plane instead of
   // the room. A real GPU renders it, which is also what a user actually sees.
-  console.log('3D pipeline (headed, for real GPU rendering):');
   await page.close();
   const gpu = await pp.launch({
     executablePath: CHROME,
@@ -173,20 +189,37 @@ try {
       console.log('  (background did not report in time, capturing anyway)');
     }
     await new Promise((r) => setTimeout(r, 8000));
-    await g.evaluate(() => {
-      const play = document.getElementById('playBtn');
-      if (play) { try { play.click(); } catch (e) {} }
-    });
-    await new Promise((r) => setTimeout(r, 6000));
+    // Collapse the operator panel BEFORE playing, so the moment a line appears
+    // can be photographed immediately. A subtitle stays on screen only for the
+    // length of its own segment, so any delay after detecting it catches the gap
+    // between lines instead -- which is how an earlier version produced a
+    // screenshot with no subtitle and read as a broken product.
     await g.evaluate(() => {
       const hide = document.getElementById('hidePanelBtn');
       if (hide) { try { hide.click(); } catch (e) {} }
+      const cam = document.getElementById('cameraMode');
+      if (cam) { cam.value = 'hybrid'; cam.dispatchEvent(new Event('change')); }
+      const play = document.getElementById('playBtn');
+      if (play) { try { play.click(); } catch (e) {} }
     });
-    await new Promise((r) => setTimeout(r, 3000));
+
+    const got = await g.waitForFunction(() => {
+      const box = document.getElementById('subtitle-box');
+      return !!(box && box.classList.contains('active') && box.textContent.trim());
+    }, { timeout: 60000, polling: 200 }).then(() => true).catch(() => false);
+    if (!got) console.log('  WARNING: no subtitle was active; the shot may look empty');
+
+    // Photograph straight away, then confirm what was actually captured.
     const p10 = `${OUT}/10-dialogue-3d.png`;
     await g.screenshot({ path: p10 });
+    const shot = await g.evaluate(() => {
+      const box = document.getElementById('subtitle-box');
+      return { active: !!(box && box.classList.contains('active')),
+               text: box ? box.textContent.trim().slice(0, 80) : '' };
+    });
     written.push('10-dialogue-3d');
-    console.log('  10-dialogue-3d');
+    console.log(`  10-dialogue-3d  subtitle="${shot.text}" visible=${shot.active}`);
+    if (!shot.active) console.log('  WARNING: the subtitle faded before the shot landed');
   } finally {
     await gpu.close();
   }

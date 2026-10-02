@@ -151,6 +151,28 @@
   </div>
   <div id="speaker-label"></div>
   <div id="subtitle-box"></div>
+  <!-- Shown when a job's dialogue does not belong to its own audio. Silent until
+       proven otherwise, and never used to hide a problem: it names the two
+       numbers so the mismatch is diagnosable from the screen. -->
+  <div id="consistency-warning" hidden
+       style="position:fixed;left:50%;transform:translateX(-50%);top:12px;z-index:200;
+              max-width:min(90vw,640px);background:rgba(120,20,20,0.94);color:#fee2e2;
+              border:1px solid #ef4444;border-radius:10px;padding:10px 14px;font-size:13px;
+              line-height:1.45;box-shadow:0 8px 30px rgba(0,0,0,0.5)"></div>
+  <script>
+    // Defined before the module script so it is available to loadDiarization()
+    // as well as to the playback loop. Kept tiny and defensive: a diagnostic
+    // that throws would take the player down with it.
+    window.showConsistencyWarning = function (message) {
+      try {
+        var el = document.getElementById('consistency-warning');
+        if (!el) return;
+        if (!message) { el.hidden = true; return; }
+        el.innerHTML = '<strong>Dialogue / audio mismatch</strong><br>' + message;
+        el.hidden = false;
+      } catch (e) { /* a banner is never worth breaking playback over */ }
+    };
+  </script>
   <div id="icon-overlay"><div class="pill"><img id="icon-img" src="" alt="" style="display:none"><span id="mood-emoji"></span></div></div>
   <script type="module">
     import * as THREE from 'three';
@@ -767,6 +789,24 @@
       // Defer avatar load until after user gesture to avoid AudioContext autoplay block (4x warnings)
       // Auto-load dialogue JSON only, not avatars — avatars will load on first Play click
       state.prePlayEditing=true;
+      // Ask the server whether this job's dialogue belongs to its own audio. Four
+      // jobs here carry a dialogue written for a longer recording, and until this
+      // existed the only symptom was hearing your own audio under somebody else's
+      // words. The server measures the real WAV duration, so this cannot drift.
+      async function checkJobConsistency(jobId) {
+        try {
+          const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}?t=${Date.now()}`,
+                               { cache: 'no-store' });
+          if (!r.ok) return;
+          const c = (await r.json()).consistency;
+          if (c && c.ok === false) {
+            window.showConsistencyWarning(
+              c.reason + ' Playback will stop when the audio ends.');
+            console.warn('[consistency]', c);
+          }
+        } catch (e) { /* never block playback on a diagnostic */ }
+      }
+
       function mergePickerLive(){
         try {
           const jid=getCurrentJobId();
@@ -818,12 +858,14 @@
         const bust = Date.now();
         // priority: explicit ?job= -> wav_job_id -> dialogue_override (manual) -> default
         // Use cache bust + no-store so avatar selected in config.html is used on hard refresh
-        if (urlJob) {
-          try { const r=await fetch(`jobs/${urlJob}/dialogue.json?t=${bust}`, {cache:'no-store'}); if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${urlJob}/dialogue.json via ?job= with ${Object.keys(state.diarization.speakers||{}).length} speakers`); } } catch(e){}
-        }
-        if (!state.diarization && wavJob) {
-          try { const r=await fetch(`jobs/${wavJob}/dialogue.json?t=${bust}`, {cache:'no-store'}); if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${wavJob}/dialogue.json via wav_job_id`); } } catch(e){}
-        }
+          if (urlJob) {
+            try { const r=await fetch(`jobs/${urlJob}/dialogue.json?t=${bust}`, {cache:'no-store'}); if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${urlJob}/dialogue.json via ?job= with ${Object.keys(state.diarization.speakers||{}).length} speakers`); } } catch(e){}
+            await checkJobConsistency(urlJob);
+          }
+          if (!state.diarization && wavJob) {
+            try { const r=await fetch(`jobs/${wavJob}/dialogue.json?t=${bust}`, {cache:'no-store'}); if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${wavJob}/dialogue.json via wav_job_id`); } } catch(e){}
+            await checkJobConsistency(wavJob);
+          }
         if (!state.diarization) {
           const over=localStorage.getItem('dialogue_override');
           if(over){ try{ state.diarization=JSON.parse(over); console.log('[config] loaded dialogue_override from config page'); }catch(e){} }
@@ -1745,7 +1787,18 @@
         }, seg.start * 1000);
         state.scheduledTimeouts.push(timeoutId);
       });
-      const totalDuration = segments[segments.length - 1].end * 1000 + 1000;
+      // End when the AUDIO ends, not when the last line does. Taking this from
+      // the segments alone meant a dialogue belonging to a longer recording kept
+      // the player running for a minute of silence after the audio was over --
+      // four jobs did exactly that, each with a dialogue 61s longer than its own
+      // audio. Out-of-bounds lines were already skipped; this stops the dead air.
+      const audioEndMs = (state.audioBuffer && state.audioBuffer.duration ? state.audioBuffer.duration : Infinity) * 1000;
+      const dialogueEndMs = segments[segments.length - 1].end * 1000 + 1000;
+      const totalDuration = Math.min(dialogueEndMs, audioEndMs);
+      if (dialogueEndMs > audioEndMs) {
+        console.warn(`[dialogue] lines run to ${(dialogueEndMs/1000).toFixed(1)}s but the audio is only ${(audioEndMs/1000).toFixed(1)}s -- this dialogue may belong to another recording`);
+        showConsistencyWarning(`This dialogue runs to ${(dialogueEndMs/1000).toFixed(1)}s but the audio is only ${(audioEndMs/1000).toFixed(1)}s. The lines after that point were written for a different recording.`);
+      }
       const endTimeout = setTimeout(() => { state.isPlaying = false; playBtn.disabled = false; stopBtn.disabled = true; statusEl.textContent = 'Dialogue finished.'; }, totalDuration);
       state.scheduledTimeouts.push(endTimeout);
     }

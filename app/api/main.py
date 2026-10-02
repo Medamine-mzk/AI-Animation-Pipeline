@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request, BackgroundTasks
+from fastapi import FastAPI, Request, BackgroundTasks, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
@@ -16,6 +16,99 @@ GOLDEN_TRANSCRIPT = ROOT / "jobs" / "golden" / "transcript.json"
 GOLDEN_CATALOG = ROOT / "jobs" / "golden" / "clip_catalog.json"
 DEFAULT_PICKER = ROOT / "jobs" / "picker" / "living_curtains_picker.json"
 ROLE_ORDER = ["girl", "woman", "man", "boy"]
+
+#: The golden London clip. Paired demo mode copies this *together with* the golden
+#: transcript -- never one without the other, which is what produced the silent
+#: mismatches this guard now catches.
+GOLDEN_AUDIO = ROOT / "media" / "golden_clip.wav"
+
+#: How far a dialogue may run past its audio before we call it a mismatch. A
+#: little slack absorbs rounding in the segment timings; 5s is far more than any
+#: legitimate trailing pause observed in a real transcript.
+DIALOGUE_OVERRUN_TOLERANCE_S = 5.0
+
+
+def audio_duration_s(path: pathlib.Path) -> float | None:
+    """Duration of an audio file in seconds, or None if it cannot be read.
+
+    Reads the WAV header directly rather than shelling out to ffprobe: this runs
+    whenever a job is opened, and a subprocess per open is a needless cost.
+    """
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(12)
+            if len(head) < 12 or head[:4] != b"RIFF" or head[8:12] != b"WAVE":
+                return None
+            byte_rate = None
+            while True:
+                hdr = fh.read(8)
+                if len(hdr) < 8:
+                    return None
+                cid = hdr[:4]
+                size = int.from_bytes(hdr[4:8], "little")
+                if cid == b"fmt ":
+                    body = fh.read(size)
+                    byte_rate = int.from_bytes(body[8:12], "little")
+                elif cid == b"data":
+                    if not byte_rate:
+                        return None
+                    return size / byte_rate
+                else:
+                    fh.seek(size + (size % 2), 1)   # chunks are word-aligned
+    except (OSError, ValueError):
+        return None
+
+
+def dialogue_end_s(job_dir: pathlib.Path) -> float | None:
+    """When the last dialogue line ends, in seconds."""
+    p = job_dir / "dialogue.json"
+    if not p.exists():
+        return None
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    ends = [float(s["end"]) for s in (data.get("segments") or []) if "end" in s]
+    return max(ends) if ends else None
+
+
+def dialogue_vs_audio(job_dir: pathlib.Path) -> dict:
+    """Does this job's dialogue actually belong to this job's audio?
+
+    A job whose dialogue outlives its audio by more than a few seconds is talking
+    about a different recording. That happened here because the golden-fallback
+    copied the golden *transcript* into a job that still held its own *audio*, so
+    the user heard their own recording under someone else's words -- with no
+    warning, because the flag that was meant to surface it had been lost.
+
+    Detected from the data rather than from a flag, so it also catches jobs that
+    predate the flag or whose meta.json was overwritten.
+    """
+    report = {"ok": True, "audioS": None, "dialogueEndS": None, "overrunS": 0.0,
+              "reason": None}
+    audio = job_dir / "audio.wav"
+    if not audio.exists():
+        audio = job_dir / "input.wav"
+    if not audio.exists():
+        return report
+
+    audio_s = audio_duration_s(audio)
+    end_s = dialogue_end_s(job_dir)
+    report["audioS"] = audio_s
+    report["dialogueEndS"] = end_s
+    if audio_s is None or end_s is None:
+        return report
+
+    overrun = end_s - audio_s
+    report["overrunS"] = round(overrun, 1)
+    if overrun > DIALOGUE_OVERRUN_TOLERANCE_S:
+        report["ok"] = False
+        report["reason"] = (
+            f"this dialogue was written for a different recording: it runs "
+            f"{end_s:.1f}s but the audio is only {audio_s:.1f}s, so the lines "
+            f"after {audio_s:.1f}s have nothing to attach to"
+        )
+    return report
 
 # Stage -> (elapsed-budget seconds, [base%, span]) for the *elapsed* progress
 # estimate. Budgets mirror the actual subprocess timeouts used in the workers so
@@ -456,7 +549,107 @@ def _attempt_diarization(job_dir: pathlib.Path, audio_path: pathlib.Path, transc
         return False
 
 
-def run_audio_job(job_id: str, audio_path: pathlib.Path, expected_speakers: int | None = None):
+def write_provenance(job_dir: pathlib.Path, **fields) -> None:
+    """Record where a job's transcript and audio came from.
+
+    Kept in its own file rather than meta.json because the upload handler writes
+    meta.json as a bare {filename, size} stub. A failed transcription used to
+    record its markers in meta.json, and a later upload-shaped write buried them
+    -- so config.html's `if (transcript_failed)` guard never fired and a job
+    playing someone else's dialogue under the user's own audio showed no warning
+    at all. Nothing but the pipeline writes this file.
+    """
+    path = job_dir / "provenance.json"
+    data = {}
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            data = {}
+    data.update(fields)
+    data["updatedAt"] = time.time()
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def read_provenance(job_dir: pathlib.Path) -> dict:
+    path = job_dir / "provenance.json"
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _on_transcribe_failure(job_dir: pathlib.Path, audio_path: pathlib.Path,
+                           transcript: pathlib.Path, exc: Exception,
+                           demo_mode: bool = False) -> None:
+    """Handle a failed transcription without ever producing a silent mismatch.
+
+    This used to copy the golden London transcript into the job and leave its own
+    audio in place. The result played the user's recording under someone else's
+    words, with the dialogue running ~61s past the end of the audio, and the flag
+    that was supposed to say so had been buried by a later meta.json write. Four
+    jobs were affected.
+
+    So the default is honest: no transcript, with the reason recorded. Demo mode
+    is opt-in and copies the golden transcript *and* the golden audio together,
+    because a mismatched pair is the actual defect -- not the substitution itself.
+    """
+    reason = (str(exc) or "unknown error")
+    prov = {"transcript_failed": True, "reason": reason}
+
+    used = None
+    for part in ("audio.wav", "full_mono.wav"):
+        if (job_dir / part).exists():
+            used = part
+            break
+    prov["audio_used"] = used
+
+    if demo_mode and GOLDEN_TRANSCRIPT.exists() and GOLDEN_AUDIO.exists():
+        shutil.copy(GOLDEN_TRANSCRIPT, transcript)
+        shutil.copy(GOLDEN_AUDIO, job_dir / "audio.wav")
+        prov["transcript_source"] = "golden-london"
+        prov["demo_mode"] = True
+        prov["note"] = ("DEMO material: both the transcript and the audio were "
+                        "replaced with the golden London clip. This is not the "
+                        "uploaded recording.")
+    else:
+        transcript.write_text(json.dumps({"segments": []}), encoding="utf-8")
+        prov["transcript_source"] = "none"
+        # Always set, so a consumer never has to guess whether the key was absent
+        # or the value was false.
+        prov["demo_mode"] = False
+        prov["note"] = ("transcription failed, so this job has no dialogue. "
+                        "The uploaded audio has been left untouched.")
+        (job_dir / "HONEST_EMPTY").write_text(
+            "whisperx transcribe failed: " + reason, encoding="utf-8")
+
+    write_provenance(job_dir, **prov)
+
+    # Mirror into meta.json for the existing readers, but provenance.json is now
+    # the authority: meta.json can be overwritten by the upload stub.
+    mf = job_dir / "meta.json"
+    try:
+        meta = json.loads(mf.read_text(encoding="utf-8")) if mf.exists() else {}
+    except (OSError, json.JSONDecodeError):
+        meta = {}
+    for k in ("transcript_failed", "reason", "transcript_source", "demo_mode", "audio_used"):
+        if k in prov:
+            meta[k] = prov[k]
+    mf.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    (job_dir / "FALLBACK.md").write_text(
+        "WhisperX transcribe failed: " + reason
+        + "\naudio used: " + str(used or "?")
+        + "\ntranscript source: " + str(prov["transcript_source"])
+        + "\ndemo mode: " + str(bool(prov.get("demo_mode")))
+        + "\n" + str(prov.get("note", "")),
+        encoding="utf-8")
+
+
+def run_audio_job(job_id: str, audio_path: pathlib.Path, expected_speakers: int | None = None,
+                  demo_mode: bool = False):
     import shutil
     job_dir = JOBS / job_id
     try:
@@ -483,34 +676,15 @@ def run_audio_job(job_id: str, audio_path: pathlib.Path, expected_speakers: int 
             if expected_speakers and expected_speakers > 0:
                 cmd += ["--min-speakers", str(expected_speakers), "--max-speakers", str(expected_speakers)]
             run_module("app.pipeline.transcribe", cmd, timeout=900)
+            # Provenance on success too, so "transcript_source" always has a
+            # value. Previously only failures recorded one, which left "was this
+            # transcript ever verified?" unanswerable for every healthy job.
+            write_provenance(job_dir, transcript_failed=False,
+                             transcript_source="whisperx", demo_mode=False)
         except Exception as e:
             print("WHISPERX_TRANSCRIBE_FAILED: " + str(e), flush=True)
-            hon = {"reason": (str(e) or "unknown error"), "transcript_failed": True}
-            for part in ("audio", "full_mono"):
-                pth = job_dir / (part if part == "audio" else "full_mono.wav")
-                if pth.exists():
-                    hon["audio_used"] = part
-                    break
-            if GOLDEN_TRANSCRIPT.exists():
-                shutil.copy(GOLDEN_TRANSCRIPT, transcript)
-                hon["transcript_source"] = "golden-london"
-            else:
-                hon["transcript_source"] = "none"
-                transcript.write_text(json.dumps({"segments": []}), encoding="utf-8")
-                (job_dir / "HONEST_EMPTY").write_text(
-                    "whisperx transcribe failed and no golden source: " + str(e), encoding="utf-8")
-            import json as _json
-            mf = job_dir / "meta.json"
-            _meta = {}
-            try:
-                _meta = _json.loads(mf.read_text(encoding="utf-8"))
-            except Exception:
-                _meta = {}
-            _meta.update(hon)
-            mf.write_text(_json.dumps(_meta, ensure_ascii=False, indent=2), encoding="utf-8")
-            (job_dir / "FALLBACK.md").write_text(
-                "WhisperX transcribe failed: " + str(e) + "\naudio used: " + str(hon.get("audio_used", "?")) + "\ntranscript source: " + hon.get("transcript_source", "?"),
-                encoding="utf-8")
+            _on_transcribe_failure(job_dir, audio_path, transcript, e,
+                                  demo_mode=demo_mode)
 
         # Honest multi-speaker attempt (A): only when whisperx diarization actually
         # runs with the HF token. On any failure we keep the single-speaker
@@ -888,13 +1062,17 @@ async def create_job(request: Request, background_tasks: BackgroundTasks = None)
     audio_path = job_dir / "input.wav"
     audio_path.write_bytes(body)
     (job_dir / "status.json").write_text(json.dumps({"status": "queued"}), encoding="utf-8")
-    meta = {"filename": fname, "size": len(body)}
+    # Opt-in only: if WhisperX fails, fall back to the golden London clip *as a
+    # matched pair* (transcript and audio together) rather than mixing the
+    # golden transcript with this upload. Default is an honest empty transcript.
+    demo_mode = (request.headers.get("X-Demo-Mode") or "").strip().lower() in ("1", "true", "yes")
+    meta = {"filename": fname, "size": len(body), "demo_mode": demo_mode}
     if expected:
         meta["expected_speakers"] = expected
     (job_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
     if background_tasks is None:
         return {"job_id": job_id, "status": "queued"}
-    background_tasks.add_task(run_audio_job, job_id, audio_path, expected)
+    background_tasks.add_task(run_audio_job, job_id, audio_path, expected, demo_mode)
     return {"job_id": job_id, "status": "queued"}
 
 
@@ -1288,6 +1466,11 @@ async def list_jobs():
                 "remapped_speakers": meta.get("remapped_speakers"),
                 "transcript_failed": meta.get("transcript_failed", False),
                 "transcript_source": meta.get("transcript_source"),
+                "demo_mode": bool(meta.get("demo_mode")),
+                # Checked for every row so the projects list can warn about a
+                # dialogue that does not match its own audio, instead of the
+                # mismatch only surfacing when someone presses Play.
+                "consistency": dialogue_vs_audio(d),
                 "status": status.get("status", "unknown"),
                 "segments": segs,
                 "speakers": speakers,
@@ -1315,6 +1498,61 @@ async def patch_job(job_id: str, request: Request):
         mf.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"ok": True, "name": name}
     raise HTTPException(status_code=400, detail="nothing to update")
+
+
+@app.post("/api/jobs/{job_id}/retranscribe")
+async def retranscribe_job(job_id: str, background_tasks: BackgroundTasks = None):
+    """Re-run transcription against this job's own uploaded audio.
+
+    The repair path for a job whose dialogue does not match its audio. There was
+    no way to do this before: the only routes were upload a new file or hand-edit
+    the job directory, so four jobs sat permanently mismatched.
+    """
+    job_dir = JOBS / job_id
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="job not found")
+
+    source = None
+    for name in ("input.wav", "full_mono.wav"):
+        if (job_dir / name).exists():
+            source = job_dir / name
+            break
+    if source is None:
+        raise HTTPException(
+            status_code=409,
+            detail="this job has no uploaded audio to transcribe; re-upload the file",
+        )
+
+    # Clear the mismatched artefacts so a half-finished retry cannot leave the
+    # old dialogue on screen next to a new transcript.
+    for stale in ("dialogue.json", "transcript.json", "FALLBACK.md", "HONEST_EMPTY"):
+        p = job_dir / stale
+        if p.exists():
+            p.unlink()
+
+    # A demo job holds golden audio, not the upload: transcribing that would
+    # regenerate the golden transcript anyway, and pretending otherwise is the
+    # bug this endpoint exists to undo.
+    prov = read_provenance(job_dir)
+    if prov.get("demo_mode"):
+        raise HTTPException(
+            status_code=409,
+            detail="this is a demo job holding the golden clip, not an upload; "
+                   "nothing to re-transcribe",
+        )
+
+    expected = None
+    try:
+        meta = json.loads((job_dir / "meta.json").read_text(encoding="utf-8"))
+        expected = meta.get("expected_speakers")
+    except (OSError, json.JSONDecodeError):
+        pass
+
+    set_status(job_dir, "queued")
+    write_provenance(job_dir, retranscribedAt=time.time())
+    if background_tasks is not None:
+        background_tasks.add_task(run_audio_job, job_id, source, expected, False)
+    return {"ok": True, "job_id": job_id, "audio": source.name, "queued": background_tasks is not None}
 
 
 @app.post("/api/jobs/{job_id}/duplicate")
@@ -1369,7 +1607,8 @@ async def get_job(job_id: str):
     progress = round(span[0] + frac * (span[1] - span[0]))
     if status in ("done", "failed"):
         progress = 100 if status == "done" else 100
-    return {**data, "progress": min(100, max(0, progress)), "elapsed": round(elapsed, 1)}
+    return {**data, "progress": min(100, max(0, progress)), "elapsed": round(elapsed, 1),
+            "consistency": dialogue_vs_audio(JOBS / job_id)}
 
 
 @app.get("/api/jobs/{job_id}/result")

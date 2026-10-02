@@ -141,11 +141,16 @@ async function fetchProjects(){
       const name = (j.name||j.filename||j.id).replace(/</g,'&lt;');
       const ready = j.status==='done' && seg>0;
       const statusColor = ready ? 'text-emerald-400' : (j.status==='failed' ? 'text-red-400' : 'text-amber-300');
+      // The server measures this against the real audio duration, so it is true
+      // even for jobs whose transcript markers were lost.
+      const bad = j.consistency && j.consistency.ok === false ? j.consistency : null;
       return `<div class="glass rounded-lg p-2 border ${active} flex flex-col gap-1 ${!ready?'opacity-60':''}">
         <div class="font-semibold truncate" title="${name}">${name} <span class="text-white/40 font-normal">#${j.id}</span></div>
         <div class="text-white/50 ${statusColor}">${seg} lines • ${spk} spk • ${j.status}${!ready && seg===0 ? ' • not ready' : ''} • ${d}</div>
+        ${bad ? `<div class="text-red-300 text-xs border border-red-500/60 bg-red-900/30 rounded px-2 py-1">Dialogue is for another recording (${bad.audioS}s audio vs ${bad.dialogueEndS}s of lines)</div>` : ''}
         <div class="flex gap-1 mt-1">
           <button data-act="open" data-id="${j.id}" class="flex-1 py-1 rounded text-xs ${ready?'bg-violet-600':'bg-white/10 cursor-not-allowed'}" ${!ready?'disabled title="Not ready - still processing or no dialogue"':''}>${ready?'Open':'Not ready'}</button>
+          ${bad ? `<button data-act="refix" data-id="${j.id}" class="px-2 py-1 bg-amber-600/60 rounded text-xs" title="Transcribe this job's own audio again">Fix</button>` : ''}
           <button data-act="dup" data-id="${j.id}" class="px-2 py-1 bg-white/10 rounded text-xs">Dup</button>
           <button data-act="del" data-id="${j.id}" class="px-2 py-1 bg-red-600/40 rounded text-xs">Del</button>
         </div>
@@ -160,6 +165,21 @@ async function fetchProjects(){
           await renderWavResult(id);
           fetchProjects();
           if(statusEl){ statusEl.textContent='Opened '+id; statusEl.className='text-xs mt-1 min-h-[1rem] break-words text-emerald-400'; }
+        } else if (act==='refix'){
+          if(!confirm('Re-transcribe project '+id+' from its own audio?\n\nThis replaces the current dialogue. It cannot be undone from here.')) return;
+          if(statusEl){ statusEl.textContent='Re-transcribing '+id+'...'; statusEl.className='text-xs mt-1 min-h-[1rem] break-words text-amber-300'; }
+          const r=await fetch('/api/jobs/'+id+'/retranscribe',{method:'POST'});
+          const j=await r.json().catch(()=>({}));
+          if(!r.ok){
+            if(statusEl){ statusEl.textContent='Could not re-transcribe: '+(j.detail||r.status); statusEl.className='text-xs mt-1 min-h-[1rem] break-words text-red-400'; }
+            return;
+          }
+          if(statusEl){ statusEl.textContent='Re-transcribing '+id+' — watch the status above'; statusEl.className='text-xs mt-1 min-h-[1rem] break-words text-amber-300'; }
+          const poll=setInterval(async ()=>{
+            const s=await fetch('/api/jobs/'+id+'?t='+Date.now(),{cache:'no-store'}).then(r=>r.json()).catch(()=>({}));
+            if(statusEl) statusEl.textContent='Re-transcribing '+id+' — '+s.status;
+            if(s.status==='done'||s.status==='failed'){ clearInterval(poll); fetchProjects(); }
+          },1500);
         } else if (act==='dup'){
           const r=await fetch('/api/jobs/'+id+'/duplicate',{method:'POST'}); const j=await r.json();
           if(statusEl){ statusEl.textContent='Duplicated -> '+j.job_id; statusEl.className='text-xs mt-1 min-h-[1rem] break-words text-emerald-400'; }
@@ -460,20 +480,61 @@ async function renderJobLines(jobId, containerEl) {
   const n = (job.speakers && Object.keys(job.speakers).length) || 1;
   let fb = null;
   try {
-    fb = await fetch('jobs/' + jobId + '/meta.json').then(r => r.json());
+    // provenance.json is the authority. meta.json is rewritten by the upload
+    // handler as a bare {filename, size} stub, which is how the transcript
+    // markers below disappeared once and let a job play someone else's dialogue
+    // under this user's audio with no warning at all.
+    const prov = await fetch('jobs/' + jobId + '/provenance.json?t=' + Date.now(), { cache: 'no-store' });
+    if (prov.ok) fb = await prov.json();
   } catch (e) {}
+  if (!fb) {
+    try { fb = await fetch('jobs/' + jobId + '/meta.json?t=' + Date.now(), { cache: 'no-store' }).then(r => r.json()); } catch (e) {}
+  }
   containerEl.innerHTML = '';
   containerEl.querySelectorAll('.honest-banner').forEach(el => el.remove());
+
+  // Clear stale banners once, BEFORE adding any. An earlier version of this
+  // block cleared twice, and the second clear deleted the mismatch banner it had
+  // just inserted -- so the warning existed in the source and never rendered.
+  //
+  // The check is measured, not flagged: the server compares the dialogue against
+  // the real audio duration, so a mismatch surfaces even on jobs whose markers
+  // were lost. This is what would have caught the four jobs that played a foreign
+  // dialogue under the user's own audio.
+  try {
+    // The inner .json() must be awaited too. Written as
+    // (await fetch(...)).json() the whole expression is a Promise, so c.consistency
+    // was undefined and the banner silently never rendered -- the fetch returned
+    // a perfectly good {"consistency":{"ok":false}} and it was thrown away.
+    const c = await (await fetch('/api/jobs/' + encodeURIComponent(jobId) + '?t=' + Date.now(),
+                                 { cache: 'no-store' })).json();
+    if (c && c.consistency && c.consistency.ok === false) {
+      const el = document.createElement('div');
+      el.className = 'honest-banner glass rounded-xl p-3 text-sm';
+      el.style.cssText = 'border-color:rgba(239,68,68,0.7);color:#fecaca';
+      el.innerHTML = '<strong>Dialogue / audio mismatch:</strong> ' + c.consistency.reason +
+        '<br><span class="opacity-80">What you see below is the dialogue as stored, but it was not written for this audio.</span>';
+      containerEl.appendChild(el);
+    }
+  } catch (e) {}
   if (fb && fb.transcript_failed) {
     const fbEl = document.createElement('div');
     fbEl.className = 'honest-banner glass rounded-xl p-3 text-sm border-amber-400/60 text-amber-200';
-    const src = fb.transcript_source || 'golden-london';
+    const src = fb.transcript_source || 'none';
     const isGolden = src === 'golden-london';
     fbEl.innerHTML = '<strong>Honest note:</strong> WhisperX could not transcribe this upload (' +
       (fb.reason ? String(fb.reason).slice(0, 250) : 'unknown error') + '). ' +
-      (isGolden ? 'The panel currently shows the default London dialogue (source: golden-london), NOT your file.' : 'No transcript generated - panel is empty (source: ' + src + ').') +
-      ' Nothing here is your recording.';
+      (isGolden ? 'This is DEMO material: both the dialogue and the audio were replaced with the golden London clip, NOT your file.'
+                : 'No transcript was generated, so this job has no dialogue. Your uploaded audio was left untouched.') +
+      ' Nothing in this panel is your recording.';
     containerEl.appendChild(fbEl);
+  }
+  if (fb && fb.demo_mode) {
+    const d = document.createElement('div');
+    d.className = 'honest-banner glass rounded-xl p-3 text-sm';
+    d.style.cssText = 'border-color:rgba(239,68,68,0.7);color:#fecaca';
+    d.innerHTML = '<strong>DEMO MODE</strong> — the dialogue and audio here are the golden London clip, not an uploaded recording.';
+    containerEl.appendChild(d);
   }
 
   const countEl = document.createElement('div');
