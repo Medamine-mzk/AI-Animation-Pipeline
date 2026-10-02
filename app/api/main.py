@@ -2,9 +2,10 @@ from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from app.api.captions import router as captions_router
+from app.api.captions import router as captions_router, reap_stale_jobs
 from fastapi.responses import FileResponse
-import uuid, json, pathlib, subprocess, sys, os, math, threading, time
+import contextlib
+import uuid, json, pathlib, shutil, subprocess, sys, os, math, threading, time
 from typing import Literal
 from pydantic import BaseModel
 
@@ -40,7 +41,29 @@ STAGE_SPAN = {
     "emote": (88, 95),
 }
 
-app = FastAPI(title="AI Animation Pipeline")
+@contextlib.asynccontextmanager
+async def lifespan(_app):
+    """Reconcile work that a previous process left behind.
+
+    Caption transcription and encoding both run as subprocesses, so if the
+    server stops -- crash, reboot, container restart -- the workers stop with it
+    and no terminal status is ever written. Without this sweep those jobs report
+    "transcribing" forever and their pages poll a progress bar that cannot
+    finish. Every host that restarts the app hits this, so it is fixed once at
+    startup rather than per request.
+    """
+    report = reap_stale_jobs()
+    if report["reaped"]:
+        print(f"[startup] marked {len(report['reaped'])} orphaned caption job(s) "
+              f"as failed: {', '.join(report['reaped'])}", flush=True)
+    if report["healed"]:
+        print(f"[startup] corrected {len(report['healed'])} job(s) whose export had "
+              f"finished without clearing its status: {', '.join(report['healed'])}",
+              flush=True)
+    yield
+
+
+app = FastAPI(title="AI Animation Pipeline", lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"], allow_credentials=True)
 
 
@@ -1371,6 +1394,101 @@ async def root():
 @app.get("/index.html")
 async def index():
     return FileResponse(str(ROOT / "index.html"))
+
+
+#: Model directories the captions pipeline needs before it can transcribe. Their
+#: absence is the difference between "installed" and "actually usable", and it
+#: is invisible until someone uploads a video and waits.
+CAPTION_MODELS = (
+    "models--Systran--faster-whisper-small",
+    "models--distilroberta-base",
+    "models--pyannote--speaker-diarization-community-1",
+    "models--pyannote--wespeaker-voxceleb-resnet34-LM",
+)
+
+
+def _hf_hub_cache() -> pathlib.Path:
+    """Where the models live, without importing huggingface_hub at startup."""
+    home = os.environ.get("HF_HOME")
+    if home:
+        return pathlib.Path(home) / "hub"
+    return pathlib.Path.home() / ".cache" / "huggingface" / "hub"
+
+
+def _model_dir_size(p: pathlib.Path) -> int:
+    """Size of a cached model, counted once.
+
+    Hugging Face caches come in two layouts. The usual one holds blobs/ (the
+    real files) plus snapshots/ pointing at them -- symlinks on Linux, copies on
+    Windows -- so walking the whole directory counts the payload twice and
+    reports ~1.4 GB for what is really ~850 MB. But some entries (distilroberta
+    here) keep their files directly in snapshots/ with an empty blobs/, so
+    falling back to blobs unconditionally reported them as 0 MB.
+
+    Prefer blobs when they hold anything, otherwise measure the directory.
+    """
+    blobs = p / "blobs"
+    root = blobs if blobs.is_dir() and any(blobs.iterdir()) else p
+    try:
+        return sum(f.stat().st_size for f in root.rglob("*") if f.is_file())
+    except OSError:
+        return 0
+
+
+@app.get("/api/health")
+async def health():
+    """Is this install actually able to transcribe and export?
+
+    Deliberately reports the things that fail *late* and quietly: a missing
+    ffmpeg only surfaces when someone tries to export, and missing models only
+    surface after an upload has already been accepted. Used by the Docker
+    healthcheck and by tools/check_setup.py.
+    """
+    from app.pipeline.caption_export import ffmpeg_available
+
+    cache = _hf_hub_cache()
+    models = {}
+    for name in CAPTION_MODELS:
+        p = cache / name
+        models[name] = {
+            "present": p.is_dir(),
+            "sizeMb": round(_model_dir_size(p) / 1e6, 1) if p.is_dir() else 0,
+        }
+    missing_models = [n for n, v in models.items() if not v["present"]]
+
+    try:
+        free = shutil.disk_usage(ROOT).free
+    except OSError:
+        free = -1
+
+    hf_token = bool(os.environ.get("HF_TOKEN"))
+    ffmpeg = ffmpeg_available()
+
+    # A token is only needed to *download* the gated diarization model. Once it
+    # is in the local cache, pyannote loads it without authenticating -- which is
+    # why the caption jobs on this machine ran with no token in the environment.
+    # So demanding a token unconditionally would report a fully working install
+    # as not ready. The token only becomes required once something is missing.
+    if missing_models:
+        ready = ffmpeg and hf_token
+        note = ("models are missing from the cache, so an HF_TOKEN is required "
+                "to download them"
+                if not hf_token else
+                "models are missing from the cache and will download on first use")
+    else:
+        ready = ffmpeg
+        note = None
+
+    return {
+        "ready": ready,
+        "note": note,
+        "ffmpeg": ffmpeg,
+        "hfToken": hf_token,
+        "models": models,
+        "missingModels": missing_models,
+        "modelCacheMb": round(sum(v["sizeMb"] for v in models.values()), 1),
+        "diskFreeGb": round(free / 1e9, 1) if free >= 0 else None,
+    }
 
 
 @app.get("/config.html")

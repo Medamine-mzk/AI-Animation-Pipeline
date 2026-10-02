@@ -33,14 +33,39 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
-FFMPEG = ROOT / "tools" / "ffmpeg" / "ffmpeg.exe"
+
+#: The bundled Windows copy, fetched by tools/fetch-dependencies.ps1.
+_BUNDLED_FFMPEG = ROOT / "tools" / "ffmpeg" / ("ffmpeg.exe" if os.name == "nt" else "ffmpeg")
+
+
+def _resolve_ffmpeg() -> str | None:
+    """Find ffmpeg: the bundled copy first, then whatever is on PATH.
+
+    This used to be a single hardcoded path to tools/ffmpeg/ffmpeg.exe, so the
+    export reported "ffmpeg is missing" on every non-Windows host -- including
+    the project's own Docker image, which installs ffmpeg through apt. Falling
+    back to PATH is what makes the container image work at all, and respects a
+    FFMPEG override for unusual setups.
+    """
+    override = os.environ.get("FFMPEG")
+    if override:
+        return override if pathlib.Path(override).exists() else shutil.which(override)
+    if _BUNDLED_FFMPEG.exists():
+        return str(_BUNDLED_FFMPEG)
+    return shutil.which("ffmpeg")
+
+
+#: None means "not found"; callers check with ffmpeg_available().
+FFMPEG = _resolve_ffmpeg()
 
 #: A short clip is capped at 180s upstream; allow generous headroom so a capture
 #: that overran slightly is not rejected at the last step.
@@ -64,7 +89,7 @@ class ExportResult:
 
 
 def ffmpeg_available() -> bool:
-    return FFMPEG.exists()
+    return bool(FFMPEG)
 
 
 def has_video_stream(path: str | pathlib.Path) -> bool:

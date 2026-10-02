@@ -26,6 +26,7 @@ Routes
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 import shutil
 import subprocess
@@ -160,17 +161,28 @@ def export_status(job_id: str):
     meta = _read_meta(job_id)
     out = _job_dir(job_id) / "export.mp4"
     manifest = _job_dir(job_id) / "export.json"
+    ready = out.exists() and manifest.exists()
+
+    # Not just "the file exists": ffmpeg creates its output immediately and
+    # fills it in, so a partially encoded mp4 would be handed out as ready.
+    # The manifest is written last, after the atomic rename, so requiring it
+    # means the file is complete.
+    #
+    # A finished export reported {"status": "encoding", "ready": true}. The
+    # encode sets exportStatus and never clears it, so the two fields
+    # contradicted each other and anything reading `status` believed the job was
+    # still running. The artifact on disk wins: it is the ground truth.
+    status = "ready" if ready else meta.get("exportStatus", "idle")
+    if ready:
+        error = None
+    else:
+        error = meta.get("exportError")
 
     info = {
-        "status": meta.get("exportStatus", "idle"),
-        # Not just "the file exists": ffmpeg creates its output immediately and
-        # fills it in, so a partially encoded mp4 would be handed out as ready.
-        # The manifest is written last, after the atomic rename, so requiring it
-        # means the file is complete.
-        "ready": out.exists() and manifest.exists(),
-        "error": meta.get("exportError"),
-        "url": f"/caption-jobs/{job_id}/export.mp4"
-        if (out.exists() and manifest.exists()) else None,
+        "status": status,
+        "ready": ready,
+        "error": error,
+        "url": f"/caption-jobs/{job_id}/export.mp4" if ready else None,
     }
     if manifest.exists():
         try:
@@ -209,6 +221,117 @@ def _update(job_id: str, **fields) -> None:
     meta.update(fields)
     meta["updatedAt"] = time.time()
     _write_meta(job_id, meta)
+
+
+#: Job states that mean a worker process is supposed to be running right now.
+IN_FLIGHT = ("queued", "extracting_audio", "transcribing", "aligning_captions")
+
+
+def reap_stale_jobs(jobs_root: pathlib.Path | None = None) -> dict:
+    """Reconcile work a previous process left behind. Returns a report.
+
+    Transcription and encoding each run in a subprocess (see
+    _spawn_caption_job). If the server process dies -- a crash, a reboot, a
+    container restart -- the child dies with it and nothing ever writes the
+    terminal status. The job then sits at "transcribing" forever and the page
+    polls it indefinitely, showing a progress bar that can never finish.
+
+    Any host that can restart the app hits this, and it is the normal case on a
+    PaaS. So the states are reconciled once at startup instead of waiting for a
+    timeout nobody would wait for.
+
+    Two different repairs happen here:
+
+    ``reaped``  a job that cannot possibly still be running is marked failed,
+                with a reason that says what happened.
+    ``healed``  a job whose encode actually finished but whose flag was never
+                cleared, because the process died between the rename and the
+                status write. Its metadata is corrected rather than left
+                claiming "encoding" forever.
+
+    The recorded pid is checked where possible: a live worker means the job is
+    genuinely running and must be left alone. Reaping is best effort, because a
+    pid from a previous boot may have been recycled by an unrelated process, so a
+    false positive needs that coincidence to line up as well.
+    """
+    report = {"reaped": [], "healed": []}
+    root = jobs_root or JOBS
+    if not root.exists():
+        return report
+
+    for d in root.iterdir():
+        if not d.is_dir() or not d.name.startswith("cap_"):
+            continue
+        meta_path = d / "meta.json"
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not meta:
+            continue
+
+        status = meta.get("status")
+        pid = meta.get("workerPid")
+        if status in IN_FLIGHT and isinstance(pid, int) and _pid_alive(pid):
+            continue  # still working
+
+        reason = None
+        heal = False
+        if status in IN_FLIGHT:
+            reason = ("the server restarted while this job was still "
+                      f"'{status}'; its worker process did not survive")
+        elif meta.get("exportStatus") == "encoding":
+            if (d / "export.mp4").exists() and (d / "export.json").exists():
+                heal = True  # the encode finished; only the flag is stale
+            else:
+                epid = meta.get("exportPid")
+                if isinstance(epid, int) and _pid_alive(epid):
+                    continue  # genuinely still encoding
+                reason = "the server restarted while this export was still encoding"
+
+        if reason:
+            meta["error"] = reason
+            if status in IN_FLIGHT:
+                meta["status"] = "failed"
+                meta["progress"] = STAGE_PCT["failed"]
+            if meta.get("exportStatus") == "encoding":
+                meta["exportStatus"] = "failed"
+                meta["exportError"] = reason
+            report["reaped"].append(d.name)
+        elif heal:
+            meta["exportStatus"] = "ready"
+            report["healed"].append(d.name)
+        else:
+            continue
+
+        try:
+            meta["updatedAt"] = time.time()
+            meta_path.write_text(
+                json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            # Do not claim a repair that did not reach the disk.
+            if reason:
+                report["reaped"].remove(d.name)
+            else:
+                report["healed"].remove(d.name)
+    return report
+
+
+def _pid_alive(pid: int) -> bool:
+    """True if a process with this pid exists (Windows and POSIX)."""
+    if pid <= 0:
+        return False
+    try:
+        if os.name == "nt":
+            out = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                capture_output=True, text=True, timeout=5,
+            )
+            return str(pid) in (out.stdout or "")
+        os.kill(pid, 0)
+        return True
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError):
+        return False
 
 
 # ------------------------------------------------------------- the pipeline

@@ -11,12 +11,41 @@ l'enseignant au serveur de l'établissement.
 |---|---|---|---|
 | **[A. Poste de l'enseignant](#a-poste-de-lenseignant)** | Un professeur, une machine | ⭐ Facile | 0 |
 | **[B. Serveur de l'établissement](#b-serveur-de-létablissement)** | Toute l'école, réseau local | ⭐⭐ Moyen | 0 |
-| **[C. Serveur distant (VPS)](#c-serveur-distant-vps)** | Accès depuis chez soi, plusieurs utilisateurs | ⭐⭐⭐ Avancé | ~5 €/mois |
+| **[C. Serveur distant (VPS)](#c-serveur-distant-vps)** | Accès depuis chez soi | ⭐⭐⭐ Avancé | ~5 €/mois |
 | **[D. Docker](#d-docker)** | Tous les cas, si Docker est connu | ⭐⭐ Moyen | 0 |
 
 > **Recommandation pour une démonstration de concours : le scénario A.**
 > Aucune donnée ne quitte la machine, ce qui répond directement au critère
 > « protection des données », et il n'y a rien à administrer.
+
+### Pourquoi pas une plateforme cloud gratuite ?
+
+Parce que la mesure est sans appel. Le sous-processus de transcription atteint
+**1 759 Mo** (voir §2.2), et les modèles sont **879 Mo** de données à télécharger
+au premier usage.
+
+| Plateforme | Offre | RAM | Verdict |
+|---|---|---|---|
+| Render | Free | 512 Mo | ✗ Les modèles seuls dépassent la RAM |
+| Render | Starter — 7 $/mois | 512 Mo | ✗ Toujours 512 Mo |
+| Render | Standard — 25 $/mois | 2 Go | ⚠ Limite : le pic est à 1,76 Go |
+| Render | Pro — 85 $/mois | 4 Go | ✓mais cher |
+| Hugging Face Spaces | CPU Basic + PRO — 9 $/mois | 16 Go | ✓ **Le meilleur rapport** |
+| **Poste de l'enseignant** | — | 4 Go+ | ✓ **Gratuit, et les données restent locales** |
+
+> Depuis juillet 2026, les **Docker Spaces** de Hugging Face exigent un compte
+> PRO : l'offre gratuite CPU Basic n'est plus accessible en conteneur.
+
+Deux pièges supplémentaires, indépendants de la RAM :
+
+- **Stockage éphémère.** Sur la plupart de ces plateformes, le système de
+  fichiers est *effacé à chaque redémarrage*. Vos vidéos téléversées et leurs
+  sous-titres disparaîtraient à la mise en veille. Il faut un disque persistant
+  (payant partout), sinon accepter la perte.
+- **Le redémarrage tue les travaux en cours.** Un worker de transcription, mort
+  avec le conteneur, laissait son travail bloqué à « Transcription » indéfiniment.
+  C'est corrigé : les travaux orphelins sont marqués en échec au démarrage, avec la
+  raison exacte (voir §5).
 
 ---
 
@@ -45,14 +74,29 @@ cp .env.example .env      # puis remplacer hf_your_token_here
 
 | | Minimum | Recommandé |
 |---|---|---|
-| RAM | 8 Go | 16 Go |
-| Disque | 15 Go | 30 Go (modèles ~6 Go + vidéos) |
+| RAM | **4 Go** | 8 Go |
+| Disque | 15 Go | 30 Go (modèles ~0,9 Go + vidéos) |
 | CPU | 4 cœurs | 8 cœurs |
 | GPU | — | Optionnel, gros gain sur la chaîne 3D |
 
 **Sans GPU, tout fonctionne.** La chaîne de sous-titres est en CPU
 (`faster-whisper`, modèle `small`). Comptez **15 à 30 s pour 30 s de vidéo** sur
 un quadruple cœur.
+
+> **Ces chiffres sont mesurés, pas estimés** (`tools/measure_ram.py`,
+> transcription réelle de 10 s, modèle `small`) :
+>
+> | | |
+> |---|---|
+> | **Pic mémoire du sous-processus ASR** | **1 759 Mo** |
+> | **Mémoire du serveur web** | **44 Mo** |
+> | **Modèles sur disque** | **879 Mo** |
+>
+> Le serveur web ne pèse que 44 Mo parce que WhisperX est importé **à la
+> demande**, à l'intérieur du sous-processus de transcription. Le gros de la
+> mémoire part donc dans un processus jetable : s'il est tué, le site continue de
+> répondre. C'est aussi ce qui permet à l'application de tourner dans une
+> instance modeste, à condition d'y laisser de la place pour *un* sous-processus.
 
 ### 2.3 Navigateur
 
@@ -203,6 +247,7 @@ Ce que le `Dockerfile` fait, et pourquoi :
 | `USER appuser` | L'image ne tourne pas en root. |
 | `HEALTHCHECK` sur l'API | `docker ps` reflète la réalité du service. |
 | `shm_size: 1gb` | PyTorch a besoin de `/dev/shm` plus grand que le défaut de 64 Mo. |
+| `--build-arg BAKE_MODELS=1` | Pré-télécharge les modèles dans l'image (~880 Mo), pour éviter un téléchargement à chaque redémarrage sur un hébergeur au disque éphémère. Le modèle de diarisation reste hors image : il est *gated* et exigerait un jeton au build. |
 
 ---
 
@@ -221,23 +266,84 @@ Ce que le `Dockerfile` fait, et pourquoi :
 
 ## 6. Diagnostic
 
+### 6.1 Vérifier l'installation en une commande
+
+```bash
+python tools/check_setup.py
+```
+
+```
+  ok   Python 3.10+       3.13.5
+  ok   Python packages    6 required modules import
+  ok   FFmpeg             ...\tools\ffmpeg\ffmpeg.exe  (7.1-essentials)
+  ok   Speech models      cached, 879 MB
+ note  HuggingFace token  not set, but the gated model is already cached
+  ok   Free disk          144.0 GB
+  ok   Port 8000          free
+ note  Server             not answering on :8000 (fine if not started)
+  ok   Caption jobs       2 job(s), none stuck
+  ----------------------------------------------------------------
+  READY - a video can be transcribed and exported.
+```
+
+Le code de sortie vaut `0` si rien d'indispensable ne manque, `1` sinon : utile
+dans un script d'installation.
+
+### 6.2 Que le serveur dit de lui-même
+
+```bash
+curl http://127.0.0.1:8000/api/health
+```
+
+```json
+{
+  "ready": true,
+  "note": null,
+  "ffmpeg": true,
+  "hfToken": false,
+  "missingModels": [],
+  "modelCacheMb": 879.4,
+  "diskFreeGb": 144.0
+}
+```
+
+`ready` signifie « un travail peut aboutir ». À noter : **un jeton
+HuggingFace n'est nécessaire que pour _télécharger_ le modèle de diarisation.**
+Une fois celui-ci en cache, il se charge sans s'authentifier — c'est pourquoi les
+travaux de cette machine ont tourné avec `HF_TOKEN` absent. L'endpoint ne
+signale donc le jeton comme manquant que si des modèles manquent réellement.
+
+### 6.3 Reprise après un redémarrage
+
+Au démarrage, l'application réconcilie les travaux laissés en cours :
+
+- un travail **impossiblement encore vivant** (`queued`, `extraction`, etc.)
+  sans worker actif est marqué **échec**, avec la cause exacte écrite dans
+  `meta.json` ;
+- un travail dont l'**encodage s'est terminé** mais dont le drapeau n'a pas été
+  remis à zéro est **corrigé** (`exportStatus: ready`) au lieu d'être signalé
+  comme bloqué.
+
+Le journal du serveur l'indique au démarrage :
+
+```
+[startup] marked 1 orphaned caption job(s) as failed: cap_ab12cd34
+[startup] corrected 1 job(s) whose export had finished: cap_5678ef90
+```
+
+### 6.4 Symptômes
+
 | Symptôme | Cause probable | Solution |
 |---|---|---|
-| `Directory 'assets' does not exist` au démarrage | Clone incomplet | Les répertoires sont créés au démarrage ; vérifier que `main.py` est bien à jour. |
-| Un seul locuteur dans les sous-titres | `HF_TOKEN` absent ou conditions non acceptées | Reprendre § 2.1. |
+| `Directory 'assets' does not exist` au démarrage | Clone incomplet | Les répertoires sont créés au démarrage ; vérifier que `main.py` est à jour. |
+| Un seul locuteur dans les sous-titres | Modèle de diarisation absent du cache | `python tools/check_setup.py` |
+| Barre de progression figée à 45 % | Worker mort (redémarrage) | Redémarrer le serveur : le travail est marqué en échec, avec la cause |
 | L'export ne démarre pas | Navigateur non-Chromium | Utiliser Chrome ou Edge. |
 | L'export s'arrête à 60 s | Timeout du proxy | Allonger `proxy_read_timeout`. |
 | Le premier traitement dure très longtemps | Téléchargement des modèles | Normal, 5–10 min. Voir `worker.log`. |
 | `ffmpeg not found` | `fetch-dependencies.ps1` non lancé, ou FFmpeg absent du `PATH` | Lancer le script, ou installer FFmpeg. |
 | Page blanche / 404 | Interface non copiée (Docker) | Reconstruire l'image. |
-
-### Vérifier que tout est en place
-
-```bash
-python -m pytest app/tests -q          # 273 tests, aucune donnée requise
-curl http://127.0.0.1:8000/api/caption-jobs
-ffmpeg -version
-```
+| `ready: false` sur `/api/health` | Modèles absents, ou ffmpeg introuvable | Lire `note` et `missingModels` |
 
 ---
 

@@ -356,7 +356,7 @@ Puis ouvrir <http://127.0.0.1:8000/>.
 
 > 📘 **[DEPLOYMENT.md](DEPLOYMENT.md)** — déploiement sur un serveur de
 > l'établissement, un VPS, ou Docker ; configuration du reverse-proxy, sauvegardes,
-> et tableau de diagnostic.
+> et tableau de diagnostic. **[DEMO.md](DEMO.md)** — guide de démonstration.
 
 ### 6.4 Tests
 
@@ -364,6 +364,20 @@ Puis ouvrir <http://127.0.0.1:8000/>.
 cd app
 python -m pytest tests -q
 ```
+
+### 6.5 Vérifier l'installation en une commande
+
+```bash
+python tools/check_setup.py
+```
+
+Contrôle Python, dépendances, FFmpeg, modèles en cache, jeton, disque, port et
+serveur — puis affiche `READY` ou la liste de ce qui manque. Le code de sortie
+vaut `0` quand tout est en place.
+
+Pour la mise en production (serveur, VPS, Docker, proxy, reprise après
+redémarrage) : **[DEPLOYMENT.md](DEPLOYMENT.md)**.
+Pour préparer une démonstration : **[DEMO.md](DEMO.md)**.
 
 ---
 
