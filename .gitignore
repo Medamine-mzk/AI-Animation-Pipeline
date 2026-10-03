@@ -125,3 +125,5 @@ desktop.ini
 # =============================================================================
 !requirements.txt
 !docs/screenshots/
+# Local backups (tags, branches and bundles) — never part of the repo
+_backups/

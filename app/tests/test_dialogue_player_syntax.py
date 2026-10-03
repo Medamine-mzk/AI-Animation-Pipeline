@@ -73,8 +73,12 @@ def test_initScene_exists():
 
 def test_buttons_wired():
     src = extract_script(ROOT / "dialogue-player.html")
-    for btn in ["playBtn.addEventListener", "drawBoxBtn", "saveSpotsBtn", "confirmSpotsBtn"]:
-        assert btn in src
+    for btn in ["playBtn.addEventListener", "drawBoxBtn", "confirmSpotsBtn"]:
+        assert btn in src, btn
+    # saveSpotsBtn was removed with the rest of the panel clutter: saveSpotsLive()
+    # already re-persists positions to localStorage on a timer, so the button only
+    # added a manual JSON download. Assert it stays gone rather than drifting back.
+    assert "saveSpotsBtn" not in src
 
 
 def test_mergePickerLive_exists():

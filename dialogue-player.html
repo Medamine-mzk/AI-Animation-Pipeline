@@ -13,10 +13,26 @@
       position: absolute; top: 16px; left: 16px;
       background: rgba(0,0,0,0.35); backdrop-filter: blur(12px);
       padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15);
-      width: 760px; max-width: 90vw; max-height: calc(100vh - 32px); overflow-y: auto; z-index: 10;
-      display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+      /* Was width:760px -- a fixed overlay that covered ~40% of the stage it
+         was meant to frame. It is now sized to its contents and collapses to a
+         single button, so watching the dialogue does not mean staring past a
+         wall of controls. */
+      width: 340px; max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 32px); overflow-y: auto; z-index: 10;
+      display: flex; flex-direction: column; gap: 12px;
       transition: opacity 0.3s, transform 0.3s;
     }
+    #ui-panel .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    #ui-panel .group { display: flex; flex-direction: column; gap: 6px; }
+    #ui-panel .group-title {
+      font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+      color: #64748b; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 4px;
+    }
+    #ui-panel .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #ui-panel .hint { font-size: 10px; color: #94a3b8; line-height: 1.4; }
+    #ui-panel .check { display: flex; align-items: center; gap: 6px; margin: 0; }
+    #ui-panel #jobSource { color: #7dd3fc; }
+    #ui-panel #stageBoxSection { display: flex; flex-direction: column; gap: 4px; }
     #ui-panel.hidden { opacity: 0; pointer-events: none; transform: translateX(-20px); }
     #togglePanelBtn {
       position: absolute; top: 16px; left: 16px; z-index: 11;
@@ -26,21 +42,30 @@
       display: none;
     }
     #togglePanelBtn.show { display: block; }
-    #ui-panel h2 { grid-column: 1 / -1; }
-    #ui-panel .col { display: flex; flex-direction: column; }
-    #ui-panel .full { grid-column: 1 / -1; }
+    #ui-panel .full { display: flex; flex-direction: column; }
     #ui-panel::-webkit-scrollbar { width: 6px; }
     #ui-panel::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-    #ui-panel h2 { font-size: 16px; margin-bottom: 12px; color: #7dd3fc; }
-    #ui-panel label { display: block; font-size: 12px; color: #aaa; margin: 10px 0 4px; }
-    #ui-panel input[type="file"] { width: 100%; color: #fff; font-size: 12px; }
+    #ui-panel h2 { font-size: 15px; color: #7dd3fc; }
+    #ui-panel label { display: block; font-size: 11px; color: #94a3b8; margin: 0; }
+    #ui-panel select {
+      width: 100%; padding: 6px; border-radius: 6px;
+      background: #222; color: #fff; border: 1px solid #444;
+    }
     #ui-panel button {
-      width: 100%; margin-top: 14px; padding: 10px;
+      width: 100%; margin-top: 0; padding: 9px;
       background: #0ea5e9; color: #fff; border: none; border-radius: 6px;
       font-weight: 600; cursor: pointer; transition: background 0.2s;
     }
     #ui-panel button:hover { background: #0284c7; }
     #ui-panel button:disabled { background: #334155; cursor: not-allowed; }
+    /* The header's Hide button is a control, not a full-width action. */
+    #ui-panel .panel-head button {
+      width: auto; padding: 4px 10px; font-size: 11px; font-weight: 500;
+      background: rgba(255,255,255,0.15);
+    }
+    #ui-panel .panel-head button:hover { background: rgba(255,255,255,0.28); }
+    #ui-panel #drawBoxBtn { background: #22c55e; }
+    #ui-panel #drawBoxBtn:hover { background: #16a34a; }
     #status { margin-top: 10px; font-size: 12px; color: #86efac; min-height: 18px; }
     #subtitle-box {
       position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
@@ -81,73 +106,75 @@
   </script>
 </head>
 <body>
-  <button id="togglePanelBtn" title="Show config (pkz)">⚙️ Config</button>
+  <button id="togglePanelBtn" title="Show controls">Controls</button>
   <div id="scene-container"></div>
   <div class="loading-overlay" id="loading">
     <div class="spinner"></div>
     <div style="color:#888;font-size:14px;">Loading TalkingHead engine...</div>
   </div>
   <div id="ui-panel">
-    <div style="display:flex;justify-content:space-between;align-items:center;grid-column:1/-1">
-      <h2 style="margin:0">TalkingHead Dialogue Player</h2>
-      <button id="hidePanelBtn" style="width:auto;margin:0;padding:4px 10px;font-size:11px;background:rgba(255,255,255,0.15)">✕ Hide (pkz)</button>
+    <div class="panel-head">
+      <h2 style="margin:0">Dialogue Player</h2>
+      <button id="hidePanelBtn" title="Hide panel">Hide</button>
     </div>
-    <div class="col">
-      <label>1. Audio File (MP3/WAV)</label>
-      <input type="file" id="audioInput" accept="audio/*" />
-      <label>2. Diarization JSON</label>
-      <input type="file" id="jsonInput" accept=".json" />
+
+    <!-- Which job is playing. The audio and the dialogue both come from the job
+         on the server, so there is nothing to pick here. -->
+    <div id="jobSource" class="hint">Loading…</div>
+
+    <div class="group">
+      <div class="group-title">Playback</div>
       <button id="playBtn" disabled>Play Dialogue</button>
       <button id="stopBtn" disabled>Stop</button>
-      <button id="recordBtn" disabled style="background:#dc2626">● Record Video (fast)</button>
-      <button id="downloadBtn" disabled style="background:#059669">⬇ Download Video</button>
-      <label style="margin-top:10px">Lip-sync Mode</label>
-      <select id="lipsyncMode" style="width:100%;padding:6px;border-radius:6px;background:#222;color:#fff;border:1px solid #444">
-        <option value="auto" selected>Auto (viseme → jaw fallback) — hybrid</option>
-        <option value="viseme">Real Viseme only (RPM viseme_aa)</option>
-        <option value="jaw">Simple Jaw Pulse only (offline)</option>
+      <div class="row2">
+        <button id="recordBtn" disabled style="background:#dc2626">● Record</button>
+        <button id="downloadBtn" disabled style="background:#059669">⬇ Video</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Look</div>
+      <label for="cameraMode">Camera</label>
+      <select id="cameraMode">
+        <option value="hybrid" selected>Hybrid — solo + two-shot</option>
+        <option value="solo">Solo — close-up per speaker</option>
+        <option value="wide">Wide — static group</option>
       </select>
-      <label>Camera Mode</label>
-      <select id="cameraMode" style="width:100%;padding:6px;border-radius:6px;background:#222;color:#fff;border:1px solid #444">
-        <option value="hybrid" selected>Hybrid — solo close-up + 2-shot dad+girl trio</option>
-        <option value="solo">Solo only — close-up per speaker</option>
-        <option value="wide">Wide only — static frameAvatars</option>
-      </select>
-      <label style="margin-top:8px; display:flex; align-items:center; gap:6px; font-size:11px; color:#aaa">
-        <input type="checkbox" id="smoothToggle"> Smooth camera (beta, ?smooth=1)
-        <span id="smoothStatus" style="font-size:10px; color:#888"></span>
+      <label class="check" for="smoothToggle">
+        <input type="checkbox" id="smoothToggle"> Smooth camera
       </label>
-      <label>Anim Mode</label>
-      <select id="animMode" style="width:100%;padding:6px;border-radius:6px;background:#222;color:#fff;border:1px solid #444">
-        <option value="mood" selected>Mood only — fast, offline (A)</option>
-        <option value="fbx">Full FBX clip — 2s preload (B)</option>
-      </select>
     </div>
-    <div class="col">
-      <div id="bgConfig" style="display:none">
-        <select id="bgSelect"></select>
-        <input id="bgScale" type="range" min="0.5" max="2.0" step="0.05" value="1.0"><span id="bgScaleVal"></span><button id="bgReset"></button>
-        <input id="bgPosX" type="range" min="-5" max="5" step="0.1" value="0"><input id="bgPosY" type="range" min="-5" max="5" step="0.1" value="0"><input id="bgPosZ" type="range" min="-5" max="5" step="0.1" value="0"><span id="bgPosVal"></span>
+
+    <div class="group">
+      <div class="group-title">Stage</div>
+      <!-- Was display:none, so the status bar demanded a step the panel would not
+           show. Drawing the box is optional; playback works without it. -->
+      <div id="stageBoxSection">
+        <button id="drawBoxBtn">⬜ Draw Stage Box</button>
+        <div class="hint">Click two corners on the floor — optional.</div>
       </div>
-      <div style="display:none">
-        <input id="charSize" type="range" min="0.05" max="0.5" step="0.01" value="0.40">
-        <span id="charSizeVal">0.40</span>
-        <input id="feetSink" type="range" min="-0.20" max="0.05" step="0.01" value="0.00">
-        <span id="feetSinkVal">0.00</span>
-      </div>
-      <div id="stageBoxSection" style="display:none;background:rgba(34,197,94,0.12);padding:10px;border-radius:8px;margin-top:8px;border:1px solid rgba(34,197,94,0.3)">
-        <div style="font-size:11px;color:#86efac;margin-bottom:6px">🎬 Stage — Draw box where 4 will stand</div>
-        <button id="drawBoxBtn" style="width:100%;padding:8px;background:#22c55e;color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer">⬜ Draw Stage Box (4 corners = 4 spots)</button>
-        <div style="font-size:9px;color:#888;margin-top:4px">Click first corner, then second corner — green box = stage</div>
-      </div>
-      <div id="camHud" style="margin-top:6px;font-size:10px;color:#888;white-space:pre-wrap"></div>
-      <button id="saveSpotsBtn" style="background:#475569;margin-top:8px">💾 Save Spots</button>
     </div>
+
     <div class="full">
-      <div id="status">Load audio + JSON to begin — Draw Stage Box first (required)</div>
+      <div id="status">Loading…</div>
       <div id="recordStatus" style="margin-top:4px;font-size:11px;color:#f87171;min-height:12px"></div>
-      <div style="margin-top:6px;font-size:10px;color:#888">Zoom: wheel • Right-drag: pan • Drag avatar to move • Ghost red = furniture • Smooth 60fps</div>
+      <div class="hint" style="margin-top:6px">Zoom: wheel • Right-drag: pan • Drag avatar to move</div>
     </div>
+
+    <!-- Kept in the DOM but hidden: applyBoxSpots() reads feetSink, and the
+         background controls are driven by picker_live, not by this panel. -->
+    <div style="display:none">
+      <select id="bgSelect"></select>
+      <input id="bgScale" type="range" min="0.5" max="2.0" step="0.05" value="1.0"><span id="bgScaleVal"></span><button id="bgReset"></button>
+      <input id="bgPosX" type="range" min="-5" max="5" step="0.1" value="0"><input id="bgPosY" type="range" min="-5" max="5" step="0.1" value="0"><input id="bgPosZ" type="range" min="-5" max="5" step="0.1" value="0"><span id="bgPosVal"></span>
+      <input id="charSize" type="range" min="0.05" max="0.5" step="0.01" value="0.40">
+      <span id="charSizeVal">0.40</span>
+      <input id="feetSink" type="range" min="-0.20" max="0.05" step="0.01" value="0.00">
+      <span id="feetSinkVal">0.00</span>
+      <div id="bgConfig"></div>
+    </div>
+    <!-- camHud is gone: a debug readout refreshed every 500ms with the camera
+         position and background scale, printed straight into the panel. -->
   </div>
   <div id="speaker-label"></div>
   <div id="subtitle-box"></div>
@@ -182,7 +209,11 @@
     import { DragControls } from 'three/addons/controls/DragControls.js';
     const BG_LIST = ["assets/background/horsleygate_hall-4k_fitted.glb"];
     const isSmooth = new URLSearchParams(location.search).get('smooth')==='1';
-    const state = { mainHead: null, avatars: {}, audioBuffer: null, diarization: null, icons: [], iconDict: {}, isPlaying: false, scheduledTimeouts: [], recorder: null, recordChunks: [], isRecording: false, recordAudioDest: null, recordedBlob: null, downloadUrl: null, lipsyncMode: 'auto', cameraMode: 'hybrid', animMode: 'mood', mixers: {}, walkMixers: {}, clipCache: new Map(), bgGroup: null, lastBox: null, bgCurrent: null, camTween: null, isSmooth };
+    const state = { mainHead: null, avatars: {}, audioBuffer: null, diarization: null, icons: [], iconDict: {}, isPlaying: false, scheduledTimeouts: [], recorder: null, recordChunks: [], isRecording: false, recordAudioDest: null, recordedBlob: null, downloadUrl: null,
+      // Fixed now that their pickers are gone: lip-sync is always the hybrid
+      // auto path, and animation is always Full FBX (every job's segments carry a
+      // clip, verified across all of them).
+      lipsyncMode: 'auto', cameraMode: 'hybrid', animMode: 'fbx', mixers: {}, walkMixers: {}, clipCache: new Map(), bgGroup: null, lastBox: null, bgCurrent: null, camTween: null, isSmooth };
     function easeInOutCubic(x){ return x<0.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2; }
     // Smooth spring (when ?smooth=1) - single writer, live head tracking, no stacked tweens
     const camSpring = { look: new THREE.Vector3(0, 1.6, 0), init: false };
@@ -439,7 +470,7 @@
       // Background group (all 13) + live edit reuse mainHead.controls (best: orbit livesave)
       state.bgGroup = new THREE.Group(); state.mainHead.scene.add(state.bgGroup);
       const bgSelect = document.getElementById('bgSelect');
-      const camHud = document.getElementById('camHud');
+      
       BG_LIST.forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p.split('/').pop(); bgSelect.appendChild(o); });
       function updateBackgroundBounds(){
         state.bgGroup.updateWorldMatrix(true,true);
@@ -462,7 +493,6 @@
           try { const saved=JSON.parse(localStorage.getItem('picker_live')); if(saved?.bgTransform?.scale) state.bgGroup.scale.set(saved.bgTransform.scale,saved.bgTransform.scale,saved.bgTransform.scale); } catch(e){}
           const box=new THREE.Box3().setFromObject(state.bgGroup);
           state.lastBox=box.clone();
-          try { camHud.textContent = `BG: ${url.split('/').pop()}  box x[${box.min.x.toFixed(1)},${box.max.x.toFixed(1)}] z[${box.min.z.toFixed(1)},${box.max.z.toFixed(1)}] scale ${state.bgGroup.scale.x.toFixed(2)}`; } catch(e){}
           state.bgCurrent=url;
         } catch(e){ console.warn('bg load fail', url, e.message); }
       }
@@ -473,8 +503,7 @@
         state.bgCurrent=null;
       } catch(e){}
       bgSelect.addEventListener('change', async (e)=>{ await loadBackground(e.target.value); await loadOccupancy(e.target.value); await reflowSpotsForBG(); if(Object.keys(state.avatars).length){ Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x,0,p.z); }); frameAvatars(0,0,{force:true}); } saveSpotsLive(false); });
-      // HUD update per frame via host loop already (controls.update)
-      setInterval(()=>{ try { const c=state.mainHead.camera, t=state.mainHead.controls.target; camHud.textContent = `BG: ${(state.bgCurrent||'').split('/').pop()}  cam (${c.position.x.toFixed(2)},${c.position.y.toFixed(2)},${c.position.z.toFixed(2)}) target (${t.x.toFixed(2)},${t.y.toFixed(2)},${t.z.toFixed(2)}) fov ${c.fov}`; } catch(e){} }, 500);
+      // The 500ms camera HUD interval is gone with the readout it filled.
       let _saveTimer=null;
       function getCurrentJobId(){
         try {
@@ -764,17 +793,9 @@
       // (No +Add beyond box corners; palette hidden)
       // (ghost +Add disabled)
       state._setupDrag=setupDrag;
-      document.getElementById('saveSpotsBtn').addEventListener('click', ()=>{
-        saveSpotsLive(true);
-        setTimeout(()=>{
-          try {
-            const payload=JSON.parse(localStorage.getItem('picker_live'));
-            const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
-            const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='picker_live.json'; a.click();
-          } catch(e){}
-          statusEl.textContent='Spots saved — picker_live.json downloaded';
-        }, 450);
-      });
+      // The Save Spots button is gone: saveSpotsLive() already re-persists every
+      // position to localStorage about every 400ms, so dragging an avatar is
+      // saved continuously. What the button added was a manual JSON download.
       try { state.mainHead.scene.background = new THREE.Color(0x87ceeb); } catch(e){}
       try { state.mainHead.renderer.setClearColor(0x87ceeb, 1); } catch(e){}
       try { state.mainHead.scene.fog = new THREE.Fog(0x87ceeb, 8, 20); } catch(e){}
@@ -788,7 +809,7 @@
         state.lastBox=new THREE.Box3(new THREE.Vector3(-3,0,-3), new THREE.Vector3(3,0.02,3));
       } catch(e){}
       loading.classList.add('hidden');
-      statusEl.textContent = 'Scene ready. Load audio + JSON.';
+      statusEl.textContent = 'Scene ready.';
       // Defer avatar load until after user gesture to avoid AudioContext autoplay block (4x warnings)
       // Auto-load dialogue JSON only, not avatars — avatars will load on first Play click
       state.prePlayEditing=true;
@@ -919,11 +940,12 @@
           }
           } // end else keep 1.119
         } catch(e){}
-        statusEl.textContent=`Auto-loaded dialogue.json (${Object.keys(state.diarization.speakers).length} speakers) — auto-loading 4 at 0.3 size, feet 0.00`; checkReady();
-        // Auto-load avatars with fixed 0.3 and 0.00 (no confirm needed)
+        // Counted, never hardcoded to 4: this block also runs for the default dialogue.
+        const _n = Object.keys(state.diarization.speakers).length;
+        statusEl.textContent=`Auto-loaded dialogue.json (${_n} speaker${_n===1?'':'s'}) — loading avatars`; checkReady();
         setTimeout(async ()=>{
           if(!Object.keys(state.avatars).length && state.diarization?.speakers){
-            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=false; try { applyPresentVisibility(0); frameAvatars(0,0,{force:true}); if(state._setupDrag) state._setupDrag(); } catch(e){} checkReady(); statusEl.textContent='4 avatars ready — Play enabled (size 0.3 feet 0.00)'; } catch(e){}
+            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=false; try { applyPresentVisibility(0); frameAvatars(0,0,{force:true}); if(state._setupDrag) state._setupDrag(); } catch(e){} checkReady(); const _m = Object.keys(state.avatars).length; const _ready = !playBtn.disabled; if(_ready) statusEl.textContent=`${_m} avatar${_m===1?'':'s'} ready — Play enabled`; } catch(e){}
           }
         }, 600);
       } catch(e) {}
@@ -931,24 +953,33 @@
       try {
         const urlJob=new URLSearchParams(location.search).get('job');
         const jobId=urlJob || localStorage.getItem('wav_job_id') || 'default';
-        const ar = await fetch(`jobs/${jobId}/audio.wav?t=${Date.now()}`, {cache:'no-store'});
-        if(ar.ok){
-          _pendingAudioArrayBuffer = await ar.arrayBuffer();
-          statusEl.textContent=`Auto-fetched audio ${(_pendingAudioArrayBuffer.byteLength/1e6).toFixed(1)}MB — Play ready`;
-          checkReady();
-        } else {
-          const ar2 = await fetch(`jobs/full_mono_london.wav?t=${Date.now()}`, {cache:'no-store'});
-          if(ar2.ok){
-            _pendingAudioArrayBuffer = await ar2.arrayBuffer();
-            statusEl.textContent=`Auto-fetched audio ${(_pendingAudioArrayBuffer.byteLength/1e6).toFixed(1)}MB — Play ready`;
-            checkReady();
-          }
-        }
+// With no ?job=, `localStorage.getItem('wav_job_id')` may name a job that no
+  // longer exists, and the old code silently fell through to a raw file path
+  // that also 404s -- leaving a visitor with no audio and no explanation. Fall
+  // back to the served default dialogue's own audio instead.
+  const ar = await fetch(`jobs/${jobId}/audio.wav?t=${Date.now()}`, {cache:'no-store'});
+  if(ar.ok){
+    _pendingAudioArrayBuffer = await ar.arrayBuffer();
+    statusEl.textContent=`Auto-fetched audio ${(_pendingAudioArrayBuffer.byteLength/1e6).toFixed(1)}MB — Play ready`
+    checkReady();
+  } else {
+// The served default dialogue carries no audio field, so there is nothing to
+    // pair it with. Record that, because the avatar-ready message is written
+    // 600ms later and would otherwise claim "Play enabled" while Play stays
+    // disabled -- a status line contradicting the button beside it.
+    try { localStorage.removeItem('wav_job_id'); } catch(e) {}
+    state._noAudio = true;
+    checkReady();
+  }
       } catch(e) { console.warn('auto audio fetch failed', e); }
       state._pendingAudioArrayBuffer=_pendingAudioArrayBuffer;
       state._boxReady=true;
-      const confirmBtn=document.createElement('button'); confirmBtn.id='confirmSpotsBtn'; confirmBtn.textContent='✓ Confirm Spots → Play'; confirmBtn.style.cssText='display:none';
-      document.getElementById('ui-panel').appendChild(confirmBtn);
+      // "Confirm Spots" is created hidden and only revealed while drawing a stage box.
+      // It was appended straight to #ui-panel, which is why it appeared as a
+      // stray full-width button at the bottom of the controls; it now lives in
+      // the Stage group beside Draw Stage Box.
+      const confirmBtn=document.createElement('button'); confirmBtn.id='confirmSpotsBtn'; confirmBtn.textContent='✓ Confirm Spots → Play'; confirmBtn.style.cssText='display:none;margin-top:4px';
+      (document.getElementById('stageBoxSection') || document.getElementById('ui-panel')).appendChild(confirmBtn);
        // Auto-load icons per-job (not golden) - each job has specific icons
         try {
           const jid = getCurrentJobId();
@@ -1025,6 +1056,12 @@
         const out = {};
         for (const id of Object.keys(state.avatars || {})) out[id] = isPresent(id, t);
         return out;
+      };
+      // The fixed animation/lip-sync settings, so "always Full FBX" and "always
+      // auto" can be asserted rather than assumed.
+      window.dialogueModes = function(){
+        return { animMode: state.animMode, lipsyncMode: state.lipsyncMode || 'auto',
+                 cameraMode: state.cameraMode, smooth: !!state.isSmooth };
       };
     function presentAvatars(t) {
       const ids = Object.keys(state.avatars);
@@ -1490,18 +1527,26 @@
       }
       return audioCtx;
     }
-    async function loadAudioFile(file) {
-      const arrayBuffer = await file.arrayBuffer();
+    // These replaced the two file pickers, which are gone. Both remain real
+    // functions: the job loader fetches audio and dialogue through this same
+    // path, so a job is prepared exactly as a manual pick used to prepare one.
+    async function loadAudioSource(src) {
+      const res = await fetch(src, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`audio ${res.status}`);
       const ctx = getAudioCtx();
-      state.audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      state.audioBuffer = await ctx.decodeAudioData(await res.arrayBuffer());
       statusEl.textContent = `Audio loaded: ${state.audioBuffer.duration.toFixed(1)}s`;
       checkReady();
     }
-    async function loadDiarizationFile(file) {
-      const text = await file.text();
-      state.diarization = JSON.parse(text);
-      statusEl.textContent = `Diarization loaded: ${state.diarization.segments.length} segments`;
-      if (Object.keys(state.avatars).length === 0 && state.diarization.speakers) { await loadAvatars(state.diarization.speakers); }
+    async function loadDiarizationSource(src) {
+      const res = await fetch(src, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`dialogue ${res.status}`);
+      state.diarization = await res.json();
+      const n = state.diarization.segments ? state.diarization.segments.length : 0;
+      statusEl.textContent = `Dialogue loaded: ${n} lines`;
+      if (Object.keys(state.avatars).length === 0 && state.diarization.speakers) {
+        await loadAvatars(state.diarization.speakers);
+      }
       checkReady();
     }
     async function ensureAudioDecoded(){
@@ -1514,14 +1559,37 @@
         return true;
       }
     function checkReady() {
+      // Name the job being played. It replaced the two file pickers, so without
+      // this there was no indication of where the audio and dialogue came from.
+      try {
+        const src = document.getElementById('jobSource');
+        if (src) {
+          const explicit = new URLSearchParams(location.search).get('job');
+          const id = explicit || localStorage.getItem('wav_job_id') || 'default';
+          const n = state.diarization ? Object.keys(state.diarization.speakers || {}).length : 0;
+          src.innerHTML = explicit
+            ? `Job <b>#${id}</b> &middot; ${n} speaker${n === 1 ? '' : 's'}`
+            : `No job selected &middot; showing the default dialogue &middot; <a href="config.html" style="color:#7dd3fc">open Dialogue Config</a>`;
+        }
+      } catch(e){}
       const ready = (state.audioBuffer || state._pendingAudioArrayBuffer) && state.diarization && validateSpots();
+      if (state._noAudio && !state.audioBuffer && !state._pendingAudioArrayBuffer) {
+        // Avatars can be ready while the audio is missing; say which is missing
+        // rather than reporting success for a Play button that does nothing.
+        statusEl.textContent = 'No audio for this dialogue — open Dialogue Config to create or pick a job';
+        playBtn.disabled = true;
+        recordBtn.disabled = true;
+        return;
+      }
       const canPlay = ready && !state.prePlayEditing ? false : ready;
       playBtn.disabled = !ready;
       recordBtn.disabled = !ready;
-      // Keep prePlayEditing true so frameAvatars shows 4/4 until Play
-      if(state.prePlayEditing && Object.keys(state.avatars).length) statusEl.textContent='Drag avatars (red=furniture), BG Size/Background, then Play';
-      else if(state.prePlayEditing) statusEl.textContent='Click Confirm Spots to load avatars';
-      else if(!validateSpots()) statusEl.textContent='Warning: move avatar away from furniture/wall then Confirm';
+      // These used to point at controls the panel no longer has: a "Confirm Spots"
+      // button and BG Size/Background sliders. Naming a control the user cannot
+      // find is worse than saying nothing.
+      if(state.prePlayEditing && Object.keys(state.avatars).length) statusEl.textContent='Drag an avatar to reposition it, then Play';
+      else if(state.prePlayEditing) statusEl.textContent='Loading avatars...';
+      else if(!validateSpots()) statusEl.textContent='Warning: an avatar is inside furniture — move it clear';
       
       if (ready) {
         const dur = state.audioBuffer.duration.toFixed(1);
@@ -1690,7 +1758,7 @@
             if(avatar.setMood) avatar.setMood(mood);
             else if(avatar.avatarMood !== undefined) avatar.avatarMood = mood;
           } catch(e) {}
-          // If animMode is fbx/hybrid, also play FBX clip from seg.clip (full body)
+          // Full FBX clip for the line (always fbx now the Anim picker is gone)
           if((state.animMode==='fbx' || state.animMode==='hybrid' || state.animMode==='mood') && seg.clip) {
             // For mood mode, clip is still available but we only use setMood, not FBX
             // For fbx/hybrid, play the clip
@@ -1910,17 +1978,14 @@
         try { clearInterval(state._recordInterval); } catch(e){}
       }
     }
-    document.getElementById('audioInput').addEventListener('change', (e) => { if (e.target.files[0]) loadAudioFile(e.target.files[0]); });
-    document.getElementById('jsonInput').addEventListener('change', (e) => { if (e.target.files[0]) loadDiarizationFile(e.target.files[0]); });
-    document.getElementById('lipsyncMode').addEventListener('change', (e)=>{ state.lipsyncMode = e.target.value; console.log('lipsyncMode', state.lipsyncMode); });
+    // The Audio/Diarization pickers, the Lip-sync select and the Anim select are
+    // gone: both inputs always came from the job on the server, and lip-sync is
+    // always 'auto' and animation always Full FBX.
     document.getElementById('cameraMode').addEventListener('change', (e)=>{ state.cameraMode = e.target.value; console.log('cameraMode', state.cameraMode); if(state.cameraMode==='wide') frameAvatars(); });
-    document.getElementById('animMode').addEventListener('change', (e)=>{ state.animMode = e.target.value; console.log('animMode', state.animMode); });
     // smooth toggle (?smooth=1)
     const smoothToggle=document.getElementById('smoothToggle');
-    const smoothStatus=document.getElementById('smoothStatus');
     if(smoothToggle){
       smoothToggle.checked = !!state.isSmooth;
-      if(smoothStatus) smoothStatus.textContent = state.isSmooth ? 'ON (spring 5.5, hold 1.5s)' : 'OFF (tween 2800)';
       smoothToggle.addEventListener('change', (e)=>{
         const on=e.target.checked;
         const url=new URL(location.href);
