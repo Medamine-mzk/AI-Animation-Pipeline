@@ -650,7 +650,10 @@
             }
             const near=isNearFurniture(x,z);
             e.object.traverse(o=>{ if(o.isMesh && o.material && o.material.emissive){ o.material.emissive.set(near ? 0x330000 : 0x000000); }});
-            if(near) statusEl.textContent='⚠️ Near furniture — move to clear floor';
+            // Plain word, not U+26A0 U+FE0F: the emoji variation selector asks for an
+    // emoji font that `font-family: system-ui` does not provide, so the warning
+    // rendered as an empty box -- an error sign that could not be read.
+    if(near) statusEl.textContent='Warning: near furniture - move to clear floor';
           });
           dragControls.addEventListener('dragend', (e)=>{
             if(state.mainHead.controls) state.mainHead.controls.enabled=true;
@@ -1480,7 +1483,7 @@
       // Keep prePlayEditing true so frameAvatars shows 4/4 until Play
       if(state.prePlayEditing && Object.keys(state.avatars).length) statusEl.textContent='Drag avatars (red=furniture), BG Size/Background, then Play';
       else if(state.prePlayEditing) statusEl.textContent='Click Confirm Spots to load avatars';
-      else if(!validateSpots()) statusEl.textContent='⚠️ Move avatar away from furniture/wall then Confirm';
+      else if(!validateSpots()) statusEl.textContent='Warning: move avatar away from furniture/wall then Confirm';
       
       if (ready) {
         const dur = state.audioBuffer.duration.toFixed(1);
@@ -1793,11 +1796,18 @@
       // four jobs did exactly that, each with a dialogue 61s longer than its own
       // audio. Out-of-bounds lines were already skipped; this stops the dead air.
       const audioEndMs = (state.audioBuffer && state.audioBuffer.duration ? state.audioBuffer.duration : Infinity) * 1000;
-      const dialogueEndMs = segments[segments.length - 1].end * 1000 + 1000;
-      const totalDuration = Math.min(dialogueEndMs, audioEndMs);
-      if (dialogueEndMs > audioEndMs) {
-        console.warn(`[dialogue] lines run to ${(dialogueEndMs/1000).toFixed(1)}s but the audio is only ${(audioEndMs/1000).toFixed(1)}s -- this dialogue may belong to another recording`);
-        showConsistencyWarning(`This dialogue runs to ${(dialogueEndMs/1000).toFixed(1)}s but the audio is only ${(audioEndMs/1000).toFixed(1)}s. The lines after that point were written for a different recording.`);
+      // The +1s tail is the "hold the last frame a beat, then stop" grace period.
+      // It must NEVER take part in the mismatch test: folding it in made the
+      // check fire on every healthy job whose last line lands within a second of
+      // the audio, and then printed both numbers identical ("runs to 100.7s but
+      // the audio is only 100.7s"). Lines end exactly at the audio all the time.
+      const lastLineEndMs = segments[segments.length - 1].end * 1000;
+      const totalDuration = Math.min(lastLineEndMs + 1000, audioEndMs);
+      // Same 5s tolerance the server uses (DIALOGUE_OVERRUN_TOLERANCE_S) so the
+      // banner and the API can never disagree about the same job.
+      if (lastLineEndMs > audioEndMs + 5000) {
+        console.warn(`[dialogue] lines run to ${(lastLineEndMs/1000).toFixed(1)}s but the audio is only ${(audioEndMs/1000).toFixed(1)}s -- this dialogue may belong to another recording`);
+        showConsistencyWarning(`This dialogue runs to ${(lastLineEndMs/1000).toFixed(1)}s but the audio is only ${(audioEndMs/1000).toFixed(1)}s. The lines after that point were written for a different recording.`);
       }
       const endTimeout = setTimeout(() => { state.isPlaying = false; playBtn.disabled = false; stopBtn.disabled = true; statusEl.textContent = 'Dialogue finished.'; }, totalDuration);
       state.scheduledTimeouts.push(endTimeout);

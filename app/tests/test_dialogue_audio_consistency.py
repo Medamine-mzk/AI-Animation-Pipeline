@@ -287,7 +287,9 @@ def test_the_capture_script_refuses_to_photograph_a_mismatch():
 def test_the_player_stops_when_the_audio_ends():
     """Not when the last line does, which left a minute of dead air."""
     src = _page("dialogue-player.html")
-    assert "Math.min(dialogueEndMs, audioEndMs)" in src
+    # The 1s grace period stays, but on the last line's own end -- naming it
+    # `lastLineEndMs` is what stopped the mismatch test from eating the tail.
+    assert "Math.min(lastLineEndMs + 1000, audioEndMs)" in src
 
 
 def test_the_players_banner_awaits_the_json_body():

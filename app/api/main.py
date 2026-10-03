@@ -469,84 +469,15 @@ def _detect_gender_for_speakers(audio_path: pathlib.Path, spk_ranges: dict) -> d
         return {}
 
 
-def _attempt_diarization(job_dir: pathlib.Path, audio_path: pathlib.Path, transcript: pathlib.Path, expected_speakers: int | None = None) -> bool:
-    """Honest multi-speaker (A): run real whisperx diarization when an HF token is
-    configured AND the pyannote model actually loads. RETURNS FALSE (keeping the
-    honest single-speaker fallback) whenever the token is absent, the model fails
-    to load, or the model detects fewer than 2 voices — never invents speakers.
-    If expected_speakers is set, passes it as min/max to the pipeline."""
-    token = os.environ.get("HF_TOKEN")
-    if not token:
-        env_file = ROOT / ".env"
-        if env_file.exists():
-            try:
-                for ln in env_file.read_text(encoding="utf-8").splitlines():
-                    if ln.startswith("HF_TOKEN="):
-                        token = ln[len("HF_TOKEN="):].strip()
-            except Exception:
-                token = None
-        if not token:
-            return False
-    import json
-    try:
-        raw = json.loads(transcript.read_text(encoding="utf-8"))
-        segs = raw.get("segments") or []
-        if not segs:
-            return False
-        from whisperx import DiarizationPipeline
-        pipe = DiarizationPipeline(use_auth_token=token)
-        if expected_speakers and expected_speakers > 0:
-            try:
-                diar = pipe(str(audio_path), min_speakers=expected_speakers, max_speakers=expected_speakers)
-            except TypeError:
-                diar = pipe(str(audio_path))
-        else:
-            diar = pipe(str(audio_path))
-        spk_ranges = {}
-        for turn, _, spk in diar.itertracks(yield_label=True):
-            spk_ranges.setdefault(spk, []).append((float(turn.start), float(turn.end)))
-        if len(spk_ranges) < 2:
-            return False
-        def best_spk(start, end):
-            mid = (float(start) + float(end)) / 2
-            for spk in spk_ranges:
-                for (s, e) in spk_ranges[spk]:
-                    if s <= mid <= e:
-                        return spk
-            best, bb = None, -1
-            for spk in spk_ranges:
-                for (s, e) in spk_ranges[spk]:
-                    ov = max(0, min(float(end), e) - max(float(start), s))
-                    if ov > bb:
-                        bb, best = ov, spk
-            return best or "SPEAKER_00"
-        used = {}
-        for s in segs:
-            spk = best_spk(s.get("start", 0), s.get("end", 0))
-            used[spk] = used.get(spk, 0) + 1
-            s["speaker"] = spk
-        order = sorted(used, key=lambda k: (-used[k], k))
-        remap = {old: f"SPEAKER_{str(i).zfill(2)}" for i, old in enumerate(order)}
-        for s in segs:
-            s["speaker"] = remap[s["speaker"]]
-        # also remap spk_ranges to new ids for gender detection
-        remapped_ranges = {}
-        for old, new in remap.items():
-            if old in spk_ranges:
-                remapped_ranges[new] = spk_ranges[old]
-        # pitch-based gender detection per final speaker
-        try:
-            genders = _detect_gender_for_speakers(audio_path, remapped_ranges)
-            # persist for later avatar assignment
-            if genders:
-                (job_dir / "speaker_genders.json").write_text(json.dumps(genders, ensure_ascii=False, indent=2), encoding="utf-8")
-                print(f"[gender] detected {genders}", flush=True)
-        except Exception as e:
-            print(f"[gender] failed {e}", flush=True)
-        transcript.write_text(json.dumps(raw, ensure_ascii=False, indent=2), encoding="utf-8")
-        return True
-    except Exception:
-        return False
+# NOTE: _attempt_diarization() was deleted here. It never ran once: it did
+#   `from whisperx import DiarizationPipeline`, but whisperx exports no such
+#   top-level name, then passed use_auth_token= (not a parameter of the
+#   installed signature) and called .itertracks() on the DataFrame this
+#   whisperx returns. All three raised, and `except Exception: return False`
+#   swallowed them -- so the honest 'second attempt' was silent dead code, and
+#   no job in the repository has a speaker_genders.json to prove otherwise.
+#   Speaker counting now lives in app/pipeline/transcribe.py behind
+#   --require-speakers, which reports the achieved count instead of pretending.
 
 
 def write_provenance(job_dir: pathlib.Path, **fields) -> None:
@@ -653,7 +584,7 @@ def run_audio_job(job_id: str, audio_path: pathlib.Path, expected_speakers: int 
     import shutil
     job_dir = JOBS / job_id
     try:
-        # persist expected for _attempt_diarization / future remap
+        # persist expected for the verified diarization pass / future re-detect
         if expected_speakers:
             try:
                 mf0 = job_dir / "meta.json"
@@ -671,25 +602,42 @@ def run_audio_job(job_id: str, audio_path: pathlib.Path, expected_speakers: int 
                 pass
         set_status(job_dir, "transcribing")
         transcript = job_dir / "transcript.json"
+        speaker_report = {}
         try:
             cmd = [str(audio_path), "-o", str(transcript)]
             if expected_speakers and expected_speakers > 0:
-                cmd += ["--min-speakers", str(expected_speakers), "--max-speakers", str(expected_speakers)]
-            run_module("app.pipeline.transcribe", cmd, timeout=900)
+                # --require-speakers makes the pipeline verify the voice count
+                # instead of trusting one clustering pass. Previously min/max were
+                # passed but the outcome was never checked, so a job could ship
+                # with 2 voices while meta.json promised 4.
+                cmd += ["--require-speakers", str(expected_speakers)]
+            run_module("app.pipeline.transcribe", cmd, timeout=1800)
+            try:
+                speaker_report = (json.loads(transcript.read_text(encoding="utf-8"))
+                                  .get("diarization") or {})
+            except Exception:
+                speaker_report = {}
+            detected = speaker_report.get("detected_speakers")
+            matched = speaker_report.get("matched")
+            if expected_speakers and matched is False:
+                print(f"[speakers] {job_id}: asked for {expected_speakers}, "
+                      f"best effort detected {detected}", flush=True)
             # Provenance on success too, so "transcript_source" always has a
             # value. Previously only failures recorded one, which left "was this
             # transcript ever verified?" unanswerable for every healthy job.
-            write_provenance(job_dir, transcript_failed=False,
-                             transcript_source="whisperx", demo_mode=False)
+            write_provenance(
+                job_dir,
+                transcript_failed=False,
+                transcript_source="whisperx",
+                demo_mode=False,
+                speakers_expected=expected_speakers,
+                speakers_detected=detected,
+                speaker_count_matched=matched,
+            )
         except Exception as e:
             print("WHISPERX_TRANSCRIBE_FAILED: " + str(e), flush=True)
             _on_transcribe_failure(job_dir, audio_path, transcript, e,
-                                  demo_mode=demo_mode)
-
-        # Honest multi-speaker attempt (A): only when whisperx diarization actually
-        # runs with the HF token. On any failure we keep the single-speaker
-        # transcript already assembled above — never invent speakers.
-        _attempt_diarization(job_dir, audio_path, transcript, expected_speakers=expected_speakers)
+                                   demo_mode=demo_mode)
 
         # per-job icons: Iconify API (150+ sets) with separate cache + SVG, local dictionary fallback
         try:
@@ -1233,8 +1181,28 @@ async def put_dialogue(job_id: str, request: Request):
     return {"ok": True, "saved": len(good)}
 
 
+class SpeakerSplitRefused(ValueError):
+    """Raised when a caller asks for more speakers than the audio actually has.
+
+    Carries the counts so the API can answer with something the user can act on
+    instead of inventing labels.
+    """
+
+    def __init__(self, detected: int, requested: int):
+        # BaseException.__init__ takes *args only -- passing keyword arguments
+        # here raised TypeError and turned every refusal into a 500.
+        super().__init__(
+            f"cannot make {requested} speakers out of {detected} detected"
+        )
+        self.detected = detected
+        self.requested = requested
+
+
 def _remap_speakers_to_target(segments: list, target: int) -> tuple[list, dict]:
-    """Remap segments to exactly `target` speakers, honest: never invent text, only reassign speaker labels."""
+    """Remap segments to exactly `target` speakers, honest: never invent text, only reassign speaker labels.
+
+    Merging is allowed. Splitting raises SpeakerSplitRefused -- see the branch below.
+    """
     if not segments or target < 1 or target > 8:
         raise ValueError("invalid target")
     # collect unique speakers sorted
@@ -1245,7 +1213,7 @@ def _remap_speakers_to_target(segments: list, target: int) -> tuple[list, dict]:
     if target == u:
         return segments, {}
     if target < u:
-        # merge: map old index % target
+        # Merge is honest: two real voices become one character on stage.
         for s in segments:
             old = s.get("speaker", "SPEAKER_00")
             old_idx = idx_of.get(old, 0)
@@ -1253,31 +1221,13 @@ def _remap_speakers_to_target(segments: list, target: int) -> tuple[list, dict]:
             ns = f"SPEAKER_{new_idx:02d}"
             new_segs.append({**s, "speaker": ns})
     else:
-        # split: need more speakers than detected - distribute round-robin by segment order
-        # keeps original speaker grouping where possible, but ensures all targets appear
-        # first preserve existing speakers for first u, then distribute remainder
-        for i, s in enumerate(segments):
-            # if we have 1 detected and want 2, alternate; if 2->4, split each speaker's segments
-            old = s.get("speaker", "SPEAKER_00")
-            old_idx = idx_of.get(old, 0)
-            # distribute: for splitting, use (i % target) to ensure balance, but try to keep old speaker stable
-            # Use: new_idx = (old_idx * (target // u) + (i % (target // u or 1))) % target  -> simpler: round-robin
-            new_idx = i % target if u == 1 else (old_idx % target if old_idx < target else i % target)
-            # fallback: ensure we actually use all targets even when u>1
-            # if u=2 target=4, old_idx 0->0, 1->1, but we never get 2,3. So use i%target when u < target
-            if u < target:
-                new_idx = i % target
-            else:
-                new_idx = old_idx % target
-            ns = f"SPEAKER_{new_idx:02d}"
-            new_segs.append({**s, "speaker": ns})
-        # ensure all targets appear at least once - if not, force
-        seen = {s["speaker"] for s in new_segs}
-        for t in range(target):
-            need = f"SPEAKER_{t:02d}"
-            if need not in seen and new_segs:
-                # reassign the least frequent speaker's last occurrence
-                new_segs[-1 - t]["speaker"] = need
+        # Splitting is NOT honest and is refused. This used to assign
+        # `i % target`, cycling speaker 0,1,2,3,0,1,... through the lines and
+        # discarding every real grouping the diarizer had found. On job b171c19f
+        # that produced a perfect synthetic cycle that read as a confident
+        # four-person conversation. A voice cannot be recovered by arithmetic on
+        # line numbers -- it has to come from the audio. Callers must re-detect.
+        raise SpeakerSplitRefused(u, target)
     # build full speakers with positions so player never gets minimal
     # try to reuse existing dialogue's speakers as template if available
     speakers = {}
@@ -1289,6 +1239,7 @@ def _remap_speakers_to_target(segments: list, target: int) -> tuple[list, dict]:
 
 @app.post("/api/jobs/{job_id}/remap")
 async def remap_job(job_id: str, request: Request):
+    """Merge real voices together. Splitting is refused: it cannot be faked."""
     job_dir = JOBS / job_id
     if not job_dir.exists():
         raise HTTPException(status_code=404, detail="job not found")
@@ -1307,7 +1258,19 @@ async def remap_job(job_id: str, request: Request):
     segs = data.get("segments") or []
     if not segs:
         raise HTTPException(status_code=400, detail="no segments to remap")
-    new_segs, speakers = _remap_speakers_to_target(segs, target)
+    try:
+        new_segs, speakers = _remap_speakers_to_target(segs, target)
+    except SpeakerSplitRefused as refused:
+        # 409, not 200: the request is answerable, but not by making speakers up.
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"This recording has {refused.detected} speaker"
+                f"{'' if refused.detected == 1 else 's'}, so {refused.requested} cannot be "
+                f"produced from it. Use Re-detect to run diarization again -- extra voices "
+                f"have to come from the audio, not from renumbering lines."
+            ),
+        )
     _persist_dialogue_edits(job_dir, new_segs, speakers)
     # also update meta for future
     try:
@@ -1440,6 +1403,11 @@ async def list_jobs():
         # skip golden/picker/system dirs
         if d.name in ("golden", "picker", "default"):
             continue
+        # Repair backups are job-shaped (they carry meta/status), so they used to
+        # appear in the projects list as if they were real work -- e.g.
+        # "#_backup-speaker-count-20261003-134956, 33 lines, 4 spk".
+        if d.name.startswith("_"):
+            continue
         try:
             meta = json.loads(meta_p.read_text(encoding="utf-8")) if meta_p.exists() else {}
             status = json.loads(status_p.read_text(encoding="utf-8")) if status_p.exists() else {"status": "unknown"}
@@ -1453,9 +1421,15 @@ async def list_jobs():
                     speakers = len(dialogue.get("speakers", {}))
                 except Exception:
                     pass
-            # fallback to transcript
-            if speakers == 0 and meta.get("expected_speakers"):
-                speakers = meta.get("expected_speakers")
+            # Speaker counts, kept apart on purpose. The old fallback did
+            # `speakers = meta["expected_speakers"]`, which reported the number
+            # the user asked for as though it had been detected -- so job
+            # b171c19f showed "4 spk" in the list while the transcript held 2.
+            prov = read_provenance(d)
+            detected = prov.get("speakers_detected")
+            if detected is None and dialogue:
+                detected = len(dialogue.get("segments") and
+                               {s.get("speaker") for s in dialogue["segments"]} or set())
             mtime = d.stat().st_mtime
             out.append({
                 "id": d.name,
@@ -1463,6 +1437,8 @@ async def list_jobs():
                 "name": meta.get("name", meta.get("filename", d.name)),
                 "size": meta.get("size", 0),
                 "expected_speakers": meta.get("expected_speakers"),
+                "speakers_detected": detected,
+                "speaker_count_matched": prov.get("speaker_count_matched"),
                 "remapped_speakers": meta.get("remapped_speakers"),
                 "transcript_failed": meta.get("transcript_failed", False),
                 "transcript_source": meta.get("transcript_source"),
@@ -1555,6 +1531,63 @@ async def retranscribe_job(job_id: str, background_tasks: BackgroundTasks = None
     return {"ok": True, "job_id": job_id, "audio": source.name, "queued": background_tasks is not None}
 
 
+@app.post("/api/jobs/{job_id}/redetect")
+async def redetect_speakers(job_id: str, request: Request, background_tasks: BackgroundTasks = None):
+    """Re-run verified diarization against this job's own audio, targeting N voices.
+
+    The honest replacement for the old round-robin remap. Speaker identity comes
+    from the recording or it is not claimed: if pyannote cannot reach the
+    requested count after every configuration is tried, the job still completes
+    and provenance records how many were actually found.
+    """
+    job_dir = JOBS / job_id
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="job not found")
+
+    body = await request.json()
+    target = body.get("speakers", body.get("target"))
+    try:
+        target = int(target)
+    except Exception:
+        raise HTTPException(status_code=400, detail="speakers must be an integer 1-8")
+    if not 1 <= target <= 8:
+        raise HTTPException(status_code=400, detail="speakers must be 1-8")
+
+    source = next((job_dir / n for n in ("input.wav", "full_mono.wav")
+                   if (job_dir / n).exists()), None)
+    if source is None:
+        raise HTTPException(
+            status_code=409,
+            detail="this job has no uploaded audio to analyse; re-upload the file",
+        )
+    if read_provenance(job_dir).get("demo_mode"):
+        raise HTTPException(
+            status_code=409,
+            detail="this is a demo job holding the golden clip, not an upload",
+        )
+
+    # Same clean slate as retranscribe: no half-updated artefacts on screen.
+    for stale in ("dialogue.json", "transcript.json", "visemes.json"):
+        p = job_dir / stale
+        if p.exists():
+            p.unlink()
+    try:
+        mf = job_dir / "meta.json"
+        meta = json.loads(mf.read_text(encoding="utf-8")) if mf.exists() else {}
+        meta["expected_speakers"] = target
+        meta.pop("remapped_speakers", None)
+        mf.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+    except Exception:
+        pass
+
+    set_status(job_dir, "queued")
+    write_provenance(job_dir, redetectRequested=target, redetectAt=time.time())
+    if background_tasks is not None:
+        background_tasks.add_task(run_audio_job, job_id, source, target, False)
+    return {"ok": True, "job_id": job_id, "requested_speakers": target,
+            "queued": background_tasks is not None}
+
+
 @app.post("/api/jobs/{job_id}/duplicate")
 async def duplicate_job(job_id: str):
     src = JOBS / job_id
@@ -1607,8 +1640,16 @@ async def get_job(job_id: str):
     progress = round(span[0] + frac * (span[1] - span[0]))
     if status in ("done", "failed"):
         progress = 100 if status == "done" else 100
+    prov = read_provenance(JOBS / job_id)
     return {**data, "progress": min(100, max(0, progress)), "elapsed": round(elapsed, 1),
-            "consistency": dialogue_vs_audio(JOBS / job_id)}
+            "consistency": dialogue_vs_audio(JOBS / job_id),
+            # Asked vs found, never conflated: the projects list used to show the
+            # requested number as if it had been detected.
+            "speakers_expected": prov.get("speakers_expected"),
+            "speakers_detected": prov.get("speakers_detected"),
+            "speaker_count_matched": prov.get("speaker_count_matched"),
+            "transcript_source": prov.get("transcript_source"),
+            "transcript_failed": prov.get("transcript_failed", False)}
 
 
 @app.get("/api/jobs/{job_id}/result")

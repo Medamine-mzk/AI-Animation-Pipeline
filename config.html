@@ -137,7 +137,14 @@ async function fetchProjects(){
     listEl.innerHTML = jobs.map(j=>{
       const d = new Date(j.mtime*1000).toLocaleString();
       const active = j.id===currentJobId ? 'border-violet-500 bg-violet-600/20' : 'border-white/10 bg-black/20';
-      const seg = j.segments || 0, spk = j.speakers || j.expected_speakers || '?';
+      const seg = j.segments || 0;
+      // Detected count, never the requested one. Falling back to
+      // expected_speakers made a 2-voice job read "4 spk" because that is what
+      // the user had asked for, not what the audio contained.
+      const spk = j.speakers_detected ?? j.speakers ?? '?';
+      const asked = j.expected_speakers;
+      const shortBy = (j.speaker_count_matched === false);
+      const spkText = (asked && shortBy) ? `${spk}/${asked}` : `${spk}`;
       const name = (j.name||j.filename||j.id).replace(/</g,'&lt;');
       const ready = j.status==='done' && seg>0;
       const statusColor = ready ? 'text-emerald-400' : (j.status==='failed' ? 'text-red-400' : 'text-amber-300');
@@ -146,7 +153,8 @@ async function fetchProjects(){
       const bad = j.consistency && j.consistency.ok === false ? j.consistency : null;
       return `<div class="glass rounded-lg p-2 border ${active} flex flex-col gap-1 ${!ready?'opacity-60':''}">
         <div class="font-semibold truncate" title="${name}">${name} <span class="text-white/40 font-normal">#${j.id}</span></div>
-        <div class="text-white/50 ${statusColor}">${seg} lines • ${spk} spk • ${j.status}${!ready && seg===0 ? ' • not ready' : ''} • ${d}</div>
+        <div class="text-white/50 ${statusColor}">${seg} lines • ${spkText} spk • ${j.status}${!ready && seg===0 ? ' • not ready' : ''} • ${d}</div>
+        ${shortBy ? `<div class="text-amber-300 text-xs border border-amber-500/50 bg-amber-900/20 rounded px-2 py-1">Audio only supports ${spk} speaker${spk===1?'':'s'} — ${asked} were requested</div>` : ''}
         ${bad ? `<div class="text-red-300 text-xs border border-red-500/60 bg-red-900/30 rounded px-2 py-1">Dialogue is for another recording (${bad.audioS}s audio vs ${bad.dialogueEndS}s of lines)</div>` : ''}
         <div class="flex gap-1 mt-1">
           <button data-act="open" data-id="${j.id}" class="flex-1 py-1 rounded text-xs ${ready?'bg-violet-600':'bg-white/10 cursor-not-allowed'}" ${!ready?'disabled title="Not ready - still processing or no dialogue"':''}>${ready?'Open':'Not ready'}</button>
@@ -544,7 +552,8 @@ async function renderJobLines(jobId, containerEl) {
     `<span id="spkCount" class="w-8 text-center font-mono">${n}</span>` +
     `<button id="spkPlus" class="w-7 h-7 bg-white/10 rounded-lg" type="button">+</button>` +
     `<span class="text-white/50 text-xs">local preview</span>` +
-    `<button id="remapBtn" class="px-3 py-1.5 bg-violet-600/60 rounded-lg text-xs" type="button" title="Persistently remap dialogue to N speakers on server">Remap to <span class="remapTarget">${n}</span> & save</button>` +
+    `<button id="remapBtn" class="px-3 py-1.5 bg-violet-600/60 rounded-lg text-xs" type="button" title="Re-run speaker detection on the audio targeting this many voices">Re-detect <span class="remapTarget">${n}</span> speakers</button>` +
+    `<span id="spkReport" class="text-xs text-white/60"></span>` +
     `<a id="playJobBtn" href="dialogue-player.html?job=${jobId}" class="px-3 py-1.5 bg-sky-600 rounded-lg text-xs" target="_blank">▶ Play</a>` +
     `<button id="saveDialogueBtn" class="ml-auto px-4 py-1.5 bg-emerald-600 rounded-lg" type="button">Save edit</button>` +
     `<span id="saveResult" class="text-xs text-white/60"></span>`;
@@ -655,18 +664,36 @@ async function renderJobLines(jobId, containerEl) {
   const remapBtn = countEl.querySelector('#remapBtn');
   if (remapBtn) remapBtn.onclick = async () => {
     const msg = countEl.querySelector('#saveResult');
-    msg.textContent = 'Remapping to ' + speakerCount + ' speakers...';
+    const report = countEl.querySelector('#spkReport');
+    msg.textContent = 'Detecting ' + speakerCount + ' speakers from the audio...';
+    report.textContent = '';
     try {
-      const r = await fetch('api/jobs/' + jobId + '/remap', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({target: speakerCount})});
+      // Re-detects voices from the recording. The old button called /remap, which
+      // for "more speakers than detected" assigned i % target -- cycling
+      // SPEAKER_00,01,02,03,00,01... through the lines and throwing away every
+      // real grouping. That fabricates identity, so it is gone.
+      const r = await fetch('api/jobs/' + jobId + '/redetect', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({speakers: speakerCount})});
       const j = await r.json();
-      if (!r.ok) throw new Error(j.detail || 'remap failed');
-      const nd = await fetch('jobs/' + jobId + '/dialogue.json').then(x=>x.json());
-      segs = nd.segments || segs;
-      job.speakers = nd.speakers || {};
-      msg.textContent = 'Remapped to ' + speakerCount + ' speakers - ' + j.segments + ' segments. Preview updated.';
-      renderRows();
+      if (!r.ok) throw new Error(j.detail || 'speaker detection failed');
+      msg.textContent = 'Re-running transcription with speaker verification. This takes a couple of minutes; the page will refresh when it finishes.';
+      const poll = setInterval(async () => {
+        try {
+          const st = await fetch('api/jobs/' + jobId).then(x => x.json());
+          if (st.status === 'done' || st.status === 'failed') {
+            clearInterval(poll);
+            if (st.status === 'failed') { msg.textContent = 'Detection failed.'; return; }
+            const got = st.speakers_detected;
+            report.textContent = got === speakerCount
+              ? 'Detected ' + got + ' speakers.'
+              : 'Asked for ' + speakerCount + ', audio only supports ' + (got ?? 'an unknown number of') + ' speakers.';
+            report.className = 'text-xs ' + (got === speakerCount ? 'text-emerald-400' : 'text-amber-400');
+            msg.textContent = 'Reloading...';
+            setTimeout(() => location.reload(), 900);
+          }
+        } catch (e) { /* keep polling */ }
+      }, 2500);
     } catch (e) {
-      msg.textContent = 'Remap failed: ' + e.message;
+      msg.textContent = 'Speaker detection failed: ' + e.message;
     }
   };
 
