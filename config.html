@@ -105,6 +105,9 @@ function updatePlayerLink(){
 }
 updatePlayerLink();
 let autoSaveTimer = null;
+// Empty jobs are collapsed in My Projects; this is the toggle behind the
+// "N empty jobs hidden - show" link.
+let showEmptyProjects = false;
 function scheduleAutoSave(){
   const el = document.getElementById('projectStatus');
   if (!currentJobId) return;
@@ -112,7 +115,6 @@ function scheduleAutoSave(){
   if (el) { el.textContent = '● unsaved changes...'; el.className = 'text-xs mt-1 min-h-[1rem] break-words text-amber-300'; }
   autoSaveTimer = setTimeout(async ()=>{
     try {
-      const pan = document.getElementById('wavResult');
       // trigger save via existing saveDialogueBtn if available, else direct PUT
       const btn = document.querySelector('#saveDialogueBtn');
       if (btn) { btn.click(); if (el) { el.textContent = '✓ auto-saved ' + new Date().toLocaleTimeString(); el.className='text-xs mt-1 min-h-[1rem] break-words text-emerald-400'; setTimeout(()=>{ if(el.textContent.startsWith('✓')) el.textContent=''; },3000); } }
@@ -127,14 +129,23 @@ async function fetchProjects(){
     const r = await fetch('/api/jobs');
     const jobs = await r.json();
     if (!Array.isArray(jobs) || jobs.length===0) { listEl.innerHTML = '<div class="text-white/40">No projects yet — upload audio to create one.</div>'; return; }
+    // Hide jobs with no dialogue. Ten empty rows from September (6 "not ready",
+    // 2 stuck in "structuring", 2 in "generating") buried the real work. They
+    // are still listed behind a toggle, because silently dropping rows would
+    // make a job look like it never existed.
+    const usable = jobs.filter(j => (j.segments||0) > 0 || showEmptyProjects);
+    const hidden = jobs.length - usable.length;
+    const hiddenNote = hidden > 0
+      ? `<div class="text-white/40 text-xs px-1 pt-1"><button type="button" id="toggleEmptyProjects" class="underline hover:text-white/70">${hidden} empty job${hidden===1?'':'s'} hidden — show</button></div>`
+      : '';
     // sort done first, then queued/transcribing
-    jobs.sort((a,b)=>{
+    usable.sort((a,b)=>{
       const doneA = (a.status==='done' && (a.segments||0)>0) ? 0 : 1;
       const doneB = (b.status==='done' && (b.segments||0)>0) ? 0 : 1;
       if (doneA!==doneB) return doneA-doneB;
       return b.mtime - a.mtime;
     });
-    listEl.innerHTML = jobs.map(j=>{
+    listEl.innerHTML = hiddenNote + (usable.length ? '' : '<div class="text-white/40">No projects with dialogue yet — upload audio to create one.</div>') + usable.map(j=>{
       const d = new Date(j.mtime*1000).toLocaleString();
       const active = j.id===currentJobId ? 'border-violet-500 bg-violet-600/20' : 'border-white/10 bg-black/20';
       const seg = j.segments || 0;
@@ -164,13 +175,13 @@ async function fetchProjects(){
         </div>
       </div>`;
     }).join('');
+    const emptyToggle = document.getElementById('toggleEmptyProjects');
+    if (emptyToggle) emptyToggle.onclick = () => { showEmptyProjects = true; fetchProjects(); };
     listEl.querySelectorAll('button[data-act]').forEach(b=>{
       b.onclick = async ()=>{
         const id=b.dataset.id, act=b.dataset.act;
         if (act==='open'){
-          currentJobId=id; localStorage.setItem('wav_job_id', id); history.replaceState(null,'','?job='+id+'&mode=wav');
-          document.getElementById('projectName').value = jobs.find(x=>x.id===id)?.name || '';
-          await renderWavResult(id);
+          await openJob(id);
           fetchProjects();
           if(statusEl){ statusEl.textContent='Opened '+id; statusEl.className='text-xs mt-1 min-h-[1rem] break-words text-emerald-400'; }
         } else if (act==='refix'){
@@ -265,12 +276,22 @@ async function refreshSpeakersPanel(){
   if(!sEl) return;
   let targetSpeakers=null;
   let targetJob=null;
+  let jobSegments=[];
   if(mode==='wav' && currentJobId){
     try{
       const r=await fetch('jobs/'+currentJobId+'/dialogue.json?t='+Date.now(), {cache:'no-store'});
       if(r.ok){
         const j=await r.json();
-        targetSpeakers=j.speakers;
+        targetSpeakers=j.speakers || {};
+        jobSegments=j.segments||[];
+        // The union, not just the map. A line can reference a speaker the
+        // speakers map never described, and that speaker still needs a name,
+        // avatar and gender -- otherwise it is simply not editable, which is
+        // exactly the "I can only edit SPEAKER_00" symptom.
+        for(const seg of jobSegments){
+          const sid=seg && seg.speaker;
+          if(sid && !targetSpeakers[sid]) targetSpeakers[sid]={};
+        }
         targetJob=currentJobId;
       }
     }catch(e){}
@@ -291,11 +312,7 @@ async function refreshSpeakersPanel(){
   // build name candidates from dialogue segments (capitalized words like Chris) + existing speaker names
   let nameCandidates=[];
   try{
-    let segs=[];
-    if(targetJob){
-      const r2=await fetch('jobs/'+targetJob+'/dialogue.json?t='+Date.now(),{cache:'no-store'});
-      if(r2.ok){ const jd=await r2.json(); segs=jd.segments||[]; }
-    } else if(data && data.segments){ segs=data.segments; }
+    const segs= targetJob ? jobSegments : (data && data.segments ? data.segments : []);
     const set=new Set();
     const stop=new Set(['What','Are','You','Doing','Surfing','Looking','Information','About','English','Secondary','Schools','Thank','Such','Nice','Friend','Come','Have','Look','There','Lot','Probably','Much','Should','Select','Need','Hello','Hi','Yes','No','The','And','But','For','With','From']);
     // existing names
@@ -426,22 +443,27 @@ async function refreshSpeakersPanel(){
     inp.addEventListener('keydown', (e)=>{ if(e.key==='Enter'){ e.preventDefault(); saveName(); inp.blur(); }});
   });
 }
-function renderWavResult(jobId) {
+async function openJob(jobId) {
+  // The ONE way to put a job on screen. Previously the editor was rendered into
+  // two containers (#lines, and a lazily created sibling that was never cleared),
+  // and only some render paths set currentJobId. That produced two side-by-side
+  // editors -- one of them stale, from a previously opened job -- while the
+  // speakers panel described whichever job currentJobId happened to hold. If a
+  // job is going to be displayed, everything has to be told about it here.
   currentJobId = jobId;
   try { localStorage.setItem('wav_job_id', jobId); } catch(e){}
+  history.replaceState(null, '', '?job=' + jobId + '&mode=wav');
   updatePlayerLink();
-  refreshSpeakersPanel();
-  const inp=document.getElementById('projectName');
+  const inp = document.getElementById('projectName');
   if (inp && !inp.value) {
-    fetch('/api/jobs').then(r=>r.json()).then(jobs=>{
-      const cur=jobs.find(x=>x.id===jobId);
-      if (cur && cur.name) inp.value=cur.name;
-      else if (cur) inp.value=cur.filename||'';
+    fetch('/api/jobs').then(r => r.json()).then(jobs => {
+      const cur = jobs.find(x => x.id === jobId);
+      if (cur) inp.value = cur.name || cur.filename || '';
     }).catch(()=>{});
   }
-  let pan = document.getElementById('wavResult');
-  if (!pan) { pan = document.createElement('div'); pan.id = 'wavResult'; pan.className = 'mt-4 space-y-2'; document.getElementById('lines').parentElement.appendChild(pan); }
-  renderJobLines(jobId, pan);
+  await renderJobLines(jobId, document.getElementById('lines'));
+  // After the render, so the panel always describes what is actually on screen.
+  refreshSpeakersPanel();
 }
 function fmtTS(t) {
   const m = Math.floor(t / 60), ss = Math.round(t % 60 * 10) / 10;
@@ -734,12 +756,12 @@ async function renderJobLines(jobId, containerEl) {
 
 async function load() {
   initProjectsPanel();
-  // if job in URL, open it directly
+  // if job in URL, open it directly. openJob owns currentJobId and the
+  // persisted id, so this only chooses *which* job -- it does not bind state.
   const urlJob = new URLSearchParams(location.search).get('job');
-  if (urlJob) { currentJobId = urlJob; try{ localStorage.setItem('wav_job_id', urlJob);}catch(e){} }
-  // restore last job in wav mode
-  if (mode === 'wav' && currentJobId) {
-    setTimeout(()=>{ renderWavResult(currentJobId); }, 300);
+  const startJob = urlJob || currentJobId;
+  if (mode === 'wav' && startJob) {
+    setTimeout(()=>{ openJob(startJob); }, 300);
   }
   const d = await fetch('jobs/dialogue.json').then(r => r.json());
   data = d;
@@ -1002,7 +1024,15 @@ document.getElementById('previewBtn').onclick = () => {
 async function initWavUpload() {
   const c = document.getElementById('lines');
   c.innerHTML = '<div class="glass rounded-xl p-4 text-sm text-white/60">Select a .wav/.mp3 via the drag-drop zone above — WhisperX transcribe + diarization updates this panel.<br><span class="text-xs text-white/40">Or drag & drop audio directly onto the dashed zone.</span></div>';
-  
+
+  // initAiMode hides these; wav mode did not, so the header's "+ Add Line" stayed
+  // live in wav mode and its handler calls render() -- replacing the loaded wav
+  // editor with the manual-mode table built from `data`. Same panel, two owners.
+  for (const id of ['addLine', 'saveBtn']) {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  }
+
   document.getElementById('useLondon').onclick = () => {
     localStorage.removeItem('wav_job_id');
     localStorage.removeItem('dialogue_override');
@@ -1093,11 +1123,16 @@ async function initWavUpload() {
         const r = await fetch('/api/jobs/' + jobId);
         const s = await r.json();
         if (s.status === 'done') {
-          el.textContent = `✓ Job ${jobId} done — dialogue ready (${s.segments||'?'} segs)`;
+          // `segments` used to be absent from this response, hence "dialogue
+          // ready (? segs)".
+          el.textContent = `✓ Job ${jobId} done — dialogue ready (${s.segments ?? '?'} segs)`;
           el.className='text-xs mt-2 min-h-[1rem] break-words text-emerald-400';
-          localStorage.setItem('wav_job_id', jobId);
-          await renderJobLines(jobId, c);
-          fetchProjects(); refreshSpeakersPanel();
+          // openJob, not renderJobLines: this path used to display the new job
+          // without setting currentJobId, so the speakers panel kept describing
+          // the previously stored job -- which is why a 4-speaker upload showed
+          // "Editing wav job 46065548 (1 speakers)" and only one editable voice.
+          await openJob(jobId);
+          fetchProjects();
           return;
         } else if (s.status === 'failed') {
           // honest failed: fetch meta.json for transcript_failed reason
@@ -1105,8 +1140,8 @@ async function initWavUpload() {
           try{ const mr=await fetch('jobs/'+jobId+'/meta.json?t='+Date.now(),{cache:'no-store'}); if(mr.ok){ const mf=await mr.json(); if(mf.transcript_failed){ honest = ` — honest: WhisperX could not transcribe (${(mf.reason||'').slice(0,180)}), source: ${mf.transcript_source||'none'} — dialogue empty, not your recording`; } } }catch(e){}
           el.innerHTML = `<span class="text-red-400 font-semibold">✕ Job failed: ${s.error||'unknown'}</span><span class="text-amber-200">${honest}</span><br><span class="text-white/40 text-xs">Check jobs/${jobId}/meta.json • try a louder/clearer clip or Use default London</span>`;
           el.className='text-xs mt-2 min-h-[1rem] break-words border border-red-500/30 bg-red-500/10 rounded p-2';
-          // also show honest banner in wavResult if any
-          try{ await renderJobLines(jobId, c); }catch(e){}
+          // Show the failure in the editor too, and bind the panel to this job.
+          try{ await openJob(jobId); }catch(e){}
           return;
         } else {
           el.textContent = 'Status: ' + s.status + '... ' + stagePct(s) + '%';
@@ -1177,7 +1212,7 @@ function initAiMode() {
           btn.className = 'inline-block mt-3 px-4 py-2 bg-emerald-600 rounded-lg';
           btn.textContent = '▶ Open in Player';
           c.appendChild(btn);
-          await renderWavResult(jobId);
+          await openJob(jobId);
           return;
         } else if (s.status === 'failed') {
           el.textContent = 'Job failed: ' + (s.error || 'unknown');

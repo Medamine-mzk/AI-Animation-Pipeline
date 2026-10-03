@@ -1641,7 +1641,17 @@ async def get_job(job_id: str):
     if status in ("done", "failed"):
         progress = 100 if status == "done" else 100
     prov = read_provenance(JOBS / job_id)
+    # status.json carries no line count, so config.html's "dialogue ready
+    # (? segs)" had nothing to print. Read it from the dialogue itself.
+    seg_count = 0
+    try:
+        dj = JOBS / job_id / "dialogue.json"
+        if dj.exists():
+            seg_count = len(json.loads(dj.read_text(encoding="utf-8")).get("segments", []))
+    except Exception:
+        seg_count = 0
     return {**data, "progress": min(100, max(0, progress)), "elapsed": round(elapsed, 1),
+            "segments": seg_count,
             "consistency": dialogue_vs_audio(JOBS / job_id),
             # Asked vs found, never conflated: the projects list used to show the
             # requested number as if it had been detected.
