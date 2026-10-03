@@ -976,18 +976,56 @@
           state.pixabayIndex = {};
        } catch(e) { console.warn('icons load failed', e); state.icons=[]; }
     }
+      // Cache keyed on the diarization object itself: it is replaced wholesale on
+      // every load, so identity is a safe invalidation signal, and this runs
+      // inside the camera frame loop.
+      let _firstLineCache = { key: null, map: new Map() };
+      function firstLineMap() {
+        const d = state.diarization;
+        if (_firstLineCache.key === d) return _firstLineCache.map;
+        const map = new Map();
+        for (const s of (d?.segments || [])) {
+          const sid = s?.speaker, t = s?.start;
+          if (sid == null || typeof t !== 'number') continue;
+          const cur = map.get(sid);
+          if (cur === undefined || t < cur) map.set(sid, t);
+        }
+        _firstLineCache = { key: d, map };
+        return map;
+      }
       function isPresent(sid, t) {
-      if(state.prePlayEditing) return true;
-      const walkins = state.diarization?.walkins || [];
-      const order = state.diarization?.entranceOrder || [];
-      const isFirst = order.length ? order[0]===sid : false;
-      if(isFirst) return true;
-      const wk = walkins.find(w=> w.speaker===sid);
-      const seg0 = state.diarization?.segments?.find(s=> s.speaker===sid);
-      const first = wk ? wk.t1 : (seg0 ? seg0.start : 0);
-      const t0 = wk ? wk.t0 : first;
-      return t >= t0 - 1e-6;
-    }
+        if(state.prePlayEditing) return true;
+        const order = state.diarization?.entranceOrder || [];
+        const walkins = state.diarization?.walkins || [];
+        // The entrance schedule is DERIVED data; the dialogue is the source of
+        // truth. It used to be trusted absolutely (`t >= walkin.t0`), so a stale
+        // schedule silently removed a character from the stage: job ce2f201a
+        // kept 2-speaker entrances after becoming a 4-speaker job, which left
+        // the mom's walk-in at 30.07s while her first line was at 8.64s -- she
+        // was invisible through her own dialogue and only appeared once the dad
+        // started talking at 32s. A speaker must therefore be on stage no later
+        // than their own first line, whatever the schedule claims.
+        const firstLine = firstLineMap().get(sid);
+        let t0;
+        if (order.length && order[0] === sid) {
+          t0 = 0;                                  // first on stage, already there
+        } else {
+          const wk = walkins.find(w => w.speaker === sid);
+          if (wk) t0 = wk.t0;
+          else if (firstLine !== undefined) t0 = firstLine;  // no entrance: appear on their first line
+          else return true;                        // nothing says otherwise
+        }
+        if (firstLine !== undefined && t0 > firstLine) t0 = firstLine;
+        return t >= t0 - 1e-6;
+      }
+      // Read-only introspection, so "is this character on stage?" can be checked
+      // in a real browser instead of inferred from the JSON. Returns exactly what
+      // applyPresentVisibility() would use; it changes nothing.
+      window.dialoguePresenceAt = function(t){
+        const out = {};
+        for (const id of Object.keys(state.avatars || {})) out[id] = isPresent(id, t);
+        return out;
+      };
     function presentAvatars(t) {
       const ids = Object.keys(state.avatars);
       const wk = state.diarization?.walkins || [];

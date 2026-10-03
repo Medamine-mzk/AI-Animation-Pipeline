@@ -281,6 +281,116 @@ def make_picker(speaker_ids: list[str]) -> str:
     return json.dumps({"spots": spots, "background": None, "camera": None, "fov": 42})
 
 
+def first_line_times(segments: list) -> dict:
+    """Earliest line time per speaker, taken from the dialogue's own segments."""
+    out: dict[str, float] = {}
+    for seg in segments or []:
+        spk = seg.get("speaker")
+        t = seg.get("start")
+        if spk is None or not isinstance(t, (int, float)):
+            continue
+        if spk not in out or t < out[spk]:
+            out[spk] = float(t)
+    return out
+
+
+def entrances_consistent(dlg_data: dict) -> dict:
+    """Report whether the entrance schedule agrees with the dialogue.
+
+    `walkins`/`entranceOrder` are derived data, and they drift: positions are also
+    rewritten by player-side spot saves, so a job can end up with 4-speaker
+    positions and a 2-speaker schedule. The player trusts the schedule, so drift
+    silently removes a character from the stage -- job ce2f201a kept a walk-in at
+    30.07s for a speaker whose first line was at 8.64s, leaving the mom invisible
+    through her own dialogue until the dad started talking at 32s.
+
+    Reporting it here turns a missing character into a visible, testable fault.
+    """
+    firsts = first_line_times(dlg_data.get("segments") or [])
+    order = dlg_data.get("entranceOrder") or []
+    walkins = {w.get("speaker"): w for w in (dlg_data.get("walkins") or [])}
+    problems: list[dict] = []
+    for sid, t_first in sorted(firsts.items()):
+        if order and sid == order[0]:
+            continue  # first on stage, always present
+        wk = walkins.get(sid)
+        if wk is None:
+            problems.append({"speaker": sid, "issue": "no_entrance",
+                             "firstLine": round(t_first, 3)})
+        elif float(wk.get("t0", 0)) > t_first:
+            problems.append({"speaker": sid, "issue": "entrance_after_first_line",
+                             "entrance": wk.get("t0"), "firstLine": round(t_first, 3)})
+    speaking = set(firsts)
+    if order and set(order) != speaking:
+        problems.append({"issue": "entrance_order_mismatch",
+                         "missing": sorted(speaking - set(order)),
+                         "extra": sorted(set(order) - speaking)})
+    return {"ok": not problems, "problems": problems,
+            "speakers": sorted(speaking), "checked": len(firsts)}
+
+
+# Doors cycle for any N. The walk length is fixed, but the *start* is clamped so a
+# character is always on stage before their own first line.
+_STAGE_DOORS = [{"x": 0.0, "z": 2.1}, {"x": -0.5, "z": 2.1},
+                {"x": 0.5, "z": 2.1}, {"x": 0.0, "z": 2.5}]
+
+
+def refresh_entrance(dlg_data: dict) -> dict:
+    """Re-derive walkins, entranceOrder and centred positions from the segments.
+
+    Called on every dialogue write, because positions are also changed by
+    player-side spot saves and the two drifted apart.
+
+    The enforced invariant: no speaker's entrance starts after their own first
+    line. Without it a character is hidden while talking.
+    """
+    segments = dlg_data.get("segments") or []
+    speakers = dlg_data.get("speakers") or {}
+    sids = sorted(speakers.keys())
+    if not segments or not sids:
+        return entrances_consistent(dlg_data)
+
+    # Centred line-up for N, so a 2-speaker job is not spread across 4 slots.
+    n = len(sids)
+    spacing = 0.7 if n <= 3 else 0.6
+    start_x = -((n - 1) * spacing) / 2
+    for idx, sid in enumerate(sids):
+        cfg = speakers.get(sid)
+        if not isinstance(cfg, dict):
+            continue
+        x = round(start_x + idx * spacing, 3)
+        if not cfg.get("position"):
+            cfg["position"] = {"x": x, "y": 0, "z": -0.85}
+        else:
+            cfg["position"]["x"] = x
+            cfg["position"]["y"] = 0
+            cfg["position"]["z"] = -0.85
+
+    firsts = first_line_times(segments)
+    speaking = [sid for sid in sids if sid in firsts]
+    speaking.sort(key=lambda sid: (firsts[sid], sid))
+    walkins = []
+    for idx, sid in enumerate(speaking):
+        if idx == 0:
+            continue  # already on stage when playback starts
+        t_first = firsts[sid]
+        t0 = round(max(0.5, t_first - 2.0), 2)
+        t1 = round(min(t0 + 1.8, t_first - 0.2), 2)
+        if t1 <= t0:
+            # No room to walk before this line: appear rather than schedule a
+            # walk that would finish after the speaker starts talking.
+            t0 = t1 = max(0.5, round(t_first - 0.2, 2))
+        if t0 > t_first:  # the invariant, stated rather than left to arithmetic
+            t0 = t1 = max(0.5, round(t_first - 0.2, 2))
+        walkins.append({"speaker": sid, "t0": round(t0, 2), "t1": round(t1, 2),
+                        "door": dict(_STAGE_DOORS[(idx - 1) % len(_STAGE_DOORS)])})
+    walkins.sort(key=lambda w: w["t0"])
+
+    dlg_data["walkins"] = walkins
+    dlg_data["entranceOrder"] = speaking
+    return entrances_consistent(dlg_data)
+
+
 def assemble_dialogue(job_dir: pathlib.Path, script_path: pathlib.Path) -> pathlib.Path:
     """Run the shared picker staging stage -> jobs/<id>/dialogue.json."""
     script = json.loads(script_path.read_text(encoding="utf-8"))
@@ -856,62 +966,11 @@ def run_audio_job(job_id: str, audio_path: pathlib.Path, expected_speakers: int 
                         dlg_data["speakers"] = speakers
                 except Exception:
                     pass
-            # ensure walkins exists and matches speakers count - generalize London 4-spot walk to N, centered
-            sids = sorted(speakers.keys()) if speakers else []
-            # always regenerate walkins + centered positions to be correct for N (so 2-speaker is centered, not -0.8/-0.2)
-            if segs and sids:
-                # centered positions for N speakers
-                # for N=2: x = -0.4, 0.4 ; N=3: -0.7,0,0.7 ; N=4: -0.9,-0.3,0.3,0.9
-                n = len(sids)
-                spacing = 0.7 if n <= 3 else 0.6
-                start_x = - (n-1) * spacing / 2
-                for idx, sid in enumerate(sids):
-                    x = round(start_x + idx * spacing, 3)
-                    # ensure position exists and is centered
-                    if sid in speakers and isinstance(speakers[sid], dict):
-                        if not speakers[sid].get("position"):
-                            speakers[sid]["position"] = {"x": x, "y": 0, "z": -0.85}
-                        else:
-                            speakers[sid]["position"]["x"] = x
-                            speakers[sid]["position"]["z"] = -0.85
-                            speakers[sid]["position"]["y"] = 0
-                # walkins: each new speaker walks just before its first line (first appearance)
-                # first speaker present at 0, others walk
-                # find first appearance per speaker
-                first_appearance = {}
-                for seg in segs:
-                    spk = seg.get("speaker", "SPEAKER_00")
-                    if spk not in first_appearance:
-                        first_appearance[spk] = seg.get("start", 0)
-                # sort sids by first appearance, first is present at 0
-                sids_by_time = sorted(sids, key=lambda sid: first_appearance.get(sid, 0))
-                walkins = []
-                for idx, sid in enumerate(sids_by_time):
-                    if idx == 0:
-                        continue
-                    t_first = first_appearance.get(sid, 0)
-                    # walk 1.8s before first line, ending 0.2s before talk - visible, not overlapping
-                    t0 = max(0.5, round(t_first - 2.0, 2))
-                    if walkins:
-                        prev_t1 = walkins[-1]["t1"]
-                        if t0 < prev_t1 + 0.5:
-                            t0 = round(prev_t1 + 0.5, 2)
-                    t1 = round(t0 + 1.8, 2)
-                    if t1 > t_first - 0.2:
-                        t1 = round(t_first - 0.2, 2)
-                        t0 = round(t1 - 1.8, 2)
-                        if t0 < 0.5:
-                            t0 = 0.5
-                            t1 = round(t0 + 1.8, 2)
-                    doors = [{"x": 0, "z": 2.1}, {"x": -0.5, "z": 2.1}, {"x": 0.5, "z": 2.1}, {"x": 0, "z": 2.5}]
-                    door = doors[(idx-1) % len(doors)]
-                    walkins.append({"speaker": sid, "t0": round(t0,2), "t1": round(t1,2), "door": door})
-                # sort walkins by t0
-                walkins.sort(key=lambda w: w["t0"])
-                dlg_data["walkins"] = walkins
-                dlg_data["entranceOrder"] = sids_by_time
-                # also ensure speakers are ordered by entrance
-                # keep dlg_data["speakers"] as is but positions already centered
+            # Entrances and positions are DERIVED from the segments, so they are
+            # re-derived once after this block rather than here: this block ends
+            # in `except Exception: pass`, and a failure inside it must not be
+            # able to leave a stale schedule behind.
+            speakers = dlg_data.get("speakers", {})
             # ensure clip variety - not all Talking.fbx
             try:
                 catalog = json.loads(GOLDEN_CATALOG.read_text(encoding="utf-8")) if GOLDEN_CATALOG.exists() else {}
@@ -931,6 +990,21 @@ def run_audio_job(job_id: str, audio_path: pathlib.Path, expected_speakers: int 
             dialogue.write_text(json.dumps(dlg_data, ensure_ascii=False, indent=2), encoding="utf-8")
         except Exception:
             pass
+        # Re-derive the entrances OUTSIDE that try/except. The block above ends in
+        # `except Exception: pass`, so a failure there used to leave whatever
+        # schedule was already on disk -- which is how stale entrances survived
+        # unnoticed. This run is guaranteed to either produce a consistent
+        # schedule or record why it could not.
+        try:
+            final = json.loads(dialogue.read_text(encoding="utf-8"))
+            entrance = refresh_entrance(final)
+            dialogue.write_text(json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8")
+            write_provenance(job_dir, entrances_ok=entrance["ok"],
+                             entrance_problems=entrance["problems"][:8],
+                             entrances_refreshed_at=time.time())
+        except Exception as exc:
+            write_provenance(job_dir, entrances_ok=None,
+                             entrance_error=str(exc)[:200])
         to_player_audio(job_dir, audio_path)
 
         _refuse_empty_dialogue(job_dir)
@@ -1137,7 +1211,15 @@ def _persist_dialogue_edits(job_dir: pathlib.Path, segments: list, speakers: dic
             merged[sid] = _ensure_full_speaker(sid, idx, old_speakers)
     existing["segments"] = segments
     existing["speakers"] = merged
+    # Re-derive the entrance schedule here too. This is the path that edits take
+    # (PUT /dialogue and remap), and it is also what player-side spot saves go
+    # through -- which is how positions got rewritten for 4 speakers while the
+    # entrances kept describing 2, in job ce2f201a.
+    entrance = refresh_entrance(existing)
     dialogue.write_text(json.dumps(existing, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_provenance(job_dir, entrances_ok=entrance["ok"],
+                     entrance_problems=entrance["problems"][:8],
+                     entrances_refreshed_at=time.time())
     emo_path = job_dir / "line_emotions.json"
     if emo_path.exists():
         emo_map = {}
@@ -1588,6 +1670,34 @@ async def redetect_speakers(job_id: str, request: Request, background_tasks: Bac
             "queued": background_tasks is not None}
 
 
+@app.post("/api/jobs/{job_id}/refresh-entrance")
+async def refresh_entrance_job(job_id: str):
+    """Re-derive walkins/entranceOrder/positions from the dialogue's own segments.
+
+    The repair for a job whose characters fail to appear. The schedule is derived
+    data and can drift from the lines -- when it does, the player hides whoever it
+    thinks has not walked on yet, silently, mid-conversation.
+    """
+    job_dir = JOBS / job_id
+    if not job_dir.is_dir():
+        raise HTTPException(status_code=404, detail="job not found")
+    dialogue = job_dir / "dialogue.json"
+    if not dialogue.exists():
+        raise HTTPException(status_code=404, detail="dialogue.json not ready")
+    try:
+        data = json.loads(dialogue.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail=f"dialogue.json is not valid JSON: {exc}")
+    before = entrances_consistent(data)
+    after = refresh_entrance(data)
+    dialogue.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_provenance(job_dir, entrances_ok=after["ok"],
+                     entrance_problems=after["problems"][:8],
+                     entrances_refreshed_at=time.time())
+    return {"ok": True, "job_id": job_id, "before": before, "after": after,
+            "speakers": after["speakers"]}
+
+
 @app.post("/api/jobs/{job_id}/duplicate")
 async def duplicate_job(job_id: str):
     src = JOBS / job_id
@@ -1644,15 +1754,21 @@ async def get_job(job_id: str):
     # status.json carries no line count, so config.html's "dialogue ready
     # (? segs)" had nothing to print. Read it from the dialogue itself.
     seg_count = 0
+    entrances = {"ok": None, "problems": [], "checked": 0}
     try:
         dj = JOBS / job_id / "dialogue.json"
         if dj.exists():
-            seg_count = len(json.loads(dj.read_text(encoding="utf-8")).get("segments", []))
+            parsed = json.loads(dj.read_text(encoding="utf-8"))
+            seg_count = len(parsed.get("segments", []))
+            # Same shape as the audio check: report drift instead of letting the
+            # player hide a character because of it.
+            entrances = entrances_consistent(parsed)
     except Exception:
         seg_count = 0
     return {**data, "progress": min(100, max(0, progress)), "elapsed": round(elapsed, 1),
             "segments": seg_count,
             "consistency": dialogue_vs_audio(JOBS / job_id),
+            "entrances": entrances,
             # Asked vs found, never conflated: the projects list used to show the
             # requested number as if it had been detected.
             "speakers_expected": prov.get("speakers_expected"),
