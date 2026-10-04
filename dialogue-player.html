@@ -513,7 +513,7 @@
         state.lastBox=new THREE.Box3(new THREE.Vector3(-20,0,-20), new THREE.Vector3(20,0.02,20));
         state.bgCurrent=null;
       } catch(e){}
-      bgSelect.addEventListener('change', async (e)=>{ await loadBackground(e.target.value); await loadOccupancy(e.target.value); await reflowSpotsForBG(); if(Object.keys(state.avatars).length){ Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x,0,p.z); }); frameAvatars(0,0,{force:true}); } saveSpotsLive(false); });
+      bgSelect.addEventListener('change', async (e)=>{ await loadBackground(e.target.value); await loadOccupancy(e.target.value); await reflowSpotsForBG(); if(Object.keys(state.avatars).length){ Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x,0,p.z); }); frameAvatars(0,0,{force:true,allTime:true}); } saveSpotsLive(false); });
       // The 500ms camera HUD interval is gone with the readout it filled.
       let _saveTimer=null;
       function getCurrentJobId(){
@@ -556,7 +556,7 @@
         const gg=window.getGroundY||getGroundY;
         Object.values(state.avatars).forEach(av=>{ if(av.armature){ let gy=0; try{ gy=gg(av.armature.position.x, av.armature.position.z); }catch(e){} av.armature.position.y=gy+s; if(av._slotPos) av._slotPos.y=gy+s; }});
         Object.keys(state.diarization?.speakers||{}).forEach(id=>{ if(state.diarization.speakers[id]){ const p=state.diarization.speakers[id]; let gy=0; try{ gy=gg(p.x,p.z); }catch(e){} p.y=+(gy+s).toFixed(3); }});
-        saveSpotsLive(false); frameAvatars(0,0,{force:true});
+        saveSpotsLive(false); frameAvatars(0,0,{force:true,allTime:true});
       }
       feetSink.addEventListener('input', (e)=>{ applyFeetSink(parseFloat(e.target.value)); });
       // BG Pos sliders (manual manipulation as requested)
@@ -640,7 +640,7 @@
           const p=state.diarization.speakers[id]?.position;
           if(p && av.armature){ av.armature.position.set(p.x, p.y, p.z); av.armature.updateMatrixWorld(true); }
         });
-        frameAvatars(0,0,{force:true}); saveSpotsLive(false);
+        frameAvatars(0,0,{force:true,allTime:true}); saveSpotsLive(false);
       }
       async function reflowSpotsForBG(){
         if(!state.diarization || !state.lastBox) return;
@@ -750,8 +750,8 @@
             // Load avatars after box if needed
             (async()=>{
               if(!Object.keys(state.avatars).length && state.diarization?.speakers){
-                try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=true; if(state._setupDrag) state._setupDrag(); const s=parseFloat(document.getElementById('charSize')?.value||0.5); Object.values(state.avatars).forEach(av=> av.armature && av.armature.scale.setScalar(s)); frameAvatars(0,0,{force:true}); } catch(e){}
-              } else { Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x, p.y, p.z); const s2=parseFloat(document.getElementById('charSize')?.value||0.5); if(av.armature) av.armature.scale.setScalar(s2); }); frameAvatars(0,0,{force:true}); }
+                try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=true; if(state._setupDrag) state._setupDrag(); const s=parseFloat(document.getElementById('charSize')?.value||0.5); Object.values(state.avatars).forEach(av=> av.armature && av.armature.scale.setScalar(s)); frameAvatars(0,0,{force:true,allTime:true}); } catch(e){}
+              } else { Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x, p.y, p.z); const s2=parseFloat(document.getElementById('charSize')?.value||0.5); if(av.armature) av.armature.scale.setScalar(s2); }); frameAvatars(0,0,{force:true,allTime:true}); }
               state._boxReady=true; const cb=document.getElementById('confirmSpotsBtn'); cb.disabled=false; cb.style.opacity=1;
             })();
           } else { statusEl.textContent='Box too small — pick larger corners'; }
@@ -782,8 +782,8 @@
           updateStageBoxHelper(); applyBoxSpots();
           statusEl.textContent='Stage Box set — 4 corners are 4 spots';
           if(!Object.keys(state.avatars).length && state.diarization?.speakers){
-            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=true; if(state._setupDrag) state._setupDrag(); const s=parseFloat(document.getElementById('charSize')?.value||0.5); Object.values(state.avatars).forEach(av=> av.armature && av.armature.scale.setScalar(s)); frameAvatars(0,0,{force:true}); } catch(e){}
-          } else { Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x, p.y, p.z); const s2=parseFloat(document.getElementById('charSize')?.value||0.5); if(av.armature) av.armature.scale.setScalar(s2); }); frameAvatars(0,0,{force:true}); }
+            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=true; if(state._setupDrag) state._setupDrag(); const s=parseFloat(document.getElementById('charSize')?.value||0.5); Object.values(state.avatars).forEach(av=> av.armature && av.armature.scale.setScalar(s)); frameAvatars(0,0,{force:true,allTime:true}); } catch(e){}
+          } else { Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x, p.y, p.z); const s2=parseFloat(document.getElementById('charSize')?.value||0.5); if(av.armature) av.armature.scale.setScalar(s2); }); frameAvatars(0,0,{force:true,allTime:true}); }
           state._boxReady=true; const cb=document.getElementById('confirmSpotsBtn'); cb.disabled=false; cb.style.opacity=1;
           state.boxDrawMode=false; boxStart=null; if(state.mainHead.controls) state.mainHead.controls.enabled=true;
           try{ if(dragControls) dragControls.enabled=true; }catch(e){}
@@ -956,7 +956,7 @@
         statusEl.textContent=`Auto-loaded dialogue.json (${_n} speaker${_n===1?'':'s'}) — loading avatars`; checkReady();
         setTimeout(async ()=>{
           if(!Object.keys(state.avatars).length && state.diarization?.speakers){
-            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=false; try { applyPresentVisibility(0); frameAvatars(0,0,{force:true}); if(state._setupDrag) state._setupDrag(); } catch(e){} checkReady(); const _m = Object.keys(state.avatars).length; const _ready = !playBtn.disabled; if(_ready) statusEl.textContent=`${_m} avatar${_m===1?'':'s'} ready — Play enabled`; } catch(e){}
+            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=false; try { applyPresentVisibility(0); frameAvatars(0,0,{force:true,allTime:true}); if(state._setupDrag) state._setupDrag(); } catch(e){} checkReady(); const _m = Object.keys(state.avatars).length; const _ready = !playBtn.disabled; if(_ready) statusEl.textContent=`${_m} avatar${_m===1?'':'s'} ready — Play enabled`; } catch(e){}
           }
         }, 600);
       } catch(e) {}
@@ -1114,9 +1114,50 @@
                  isSpeaker: id === activeSpeakerAt(t),
                  eligible: isPresent(id, t) && !isWalking(id, t) && id !== activeSpeakerAt(t) };
       };
-      // Live avatar handles, so a browser check can reproduce a competing
-      // visibility writer rather than only asserting that none exists.
-      window.__stageAvatars = state.avatars;
+      // Live avatar handles. A function, not a value: loadAvatars() REASSIGNS
+      // state.avatars, so a captured reference went stale and read as empty --
+      // which made a measurement silently prove nothing.
+      window.__stageAvatars = function(){ return state.avatars; };
+      window.__measureAvatarHeight = function(id){
+        const av = state.avatars[id];
+        return av ? measureAvatarHeight(av) : 0;
+      };
+      // Camera + head positions, so framing can be measured as geometry rather
+      // than eyeballed in a screenshot.
+      window.__camera = function(){
+        const c = state.mainHead && state.mainHead.camera;
+        return c ? { x: c.position.x, y: c.position.y, z: c.position.z, fov: c.fov } : null;
+      };
+      window.__cameraHandle = function(){ return (state.mainHead && state.mainHead.camera) || null; };
+      window.__headWorld = function(id){
+        const av = state.avatars[id];
+        return av ? getHeadWorldPos(av) : null;
+      };
+      // Project a character's bounding box into normalised device coordinates.
+      // This is the direct test of "is the whole character in shot": NDC runs
+      // -1..1, so anything beyond +/-1 is outside the frustum and therefore not
+      // rendered -- which is what "the body disappeared" actually was.
+      window.__avatarNdc = function(id){
+        const av = state.avatars[id];
+        const cam = state.mainHead && state.mainHead.camera;
+        if (!av || !av.armature || !cam) return null;
+        let box;
+        try { box = new THREE.Box3().setFromObject(av.armature); } catch(e){ return null; }
+        if (!isFinite(box.min.x) || !isFinite(box.max.x)) return null;
+        cam.updateMatrixWorld(true);
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        const v = new THREE.Vector3();
+        for (let i = 0; i < 8; i++) {
+          v.set(i & 1 ? box.max.x : box.min.x,
+                i & 2 ? box.max.y : box.min.y,
+                i & 4 ? box.max.z : box.min.z);
+          v.project(cam);
+          minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
+          minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
+        }
+        return { minX, maxX, minY, maxY,
+                 fullyIn: minX >= -1 && maxX <= 1 && minY >= -1 && maxY <= 1 };
+      };
       // Lets a check suspend the single-owner rule, so a competing writer can be
       // shown to actually break the scene. Without this, applyStageVisibility()
       // running every frame silently repairs whatever anyone else does.
@@ -1131,13 +1172,49 @@
       if(t===undefined) t = state.diarization ? Math.min(...Object.values(state.diarization.speakers).map((_,i)=>0)) : 0;
       return ids.filter(id=> isPresent(id, t));
     }
+    // -------------------------------------------------------------- avatar size
+    // Measured from the loaded mesh, not assumed. The camera distances were
+    // hardcoded (0.7*scale + 0.50 in front of the head), which happened to fit a
+    // character at one particular scale and cropped every other one -- the body
+    // disappearing below the shoulders was the framing, not a visibility flag.
+    const _heightCache = new WeakMap();
+
+    function measureAvatarHeight(avatar) {
+      if (!avatar || !avatar.armature) return 0;
+      if (_heightCache.has(avatar)) return _heightCache.get(avatar);
+      let h = 0;
+      try {
+        const box = new THREE.Box3().setFromObject(avatar.armature);
+        if (isFinite(box.min.y) && isFinite(box.max.y)) h = Math.max(0, box.max.y - box.min.y);
+      } catch(e){}
+      if (!h) {
+        // Bounds unavailable: fall back to the head height plus a body estimate.
+        try { h = getHeadWorldPos(avatar).y + 0.5; } catch(e){ h = 1.6; }
+      }
+      _heightCache.set(avatar, h);
+      return h;
+    }
+
     function frameAvatars(t, dur, opts) {
       let avatars = Object.values(state.avatars);
-      if(state.diarization?.walkins?.length) {
+      const o = opts||{};
+      // opts.allTime frames the whole cast regardless of playback time. The many
+      // frameAvatars(0, ...) call sites wanted "frame everyone", but 0 is also a
+      // *time*, and at t=0 only the lead character has entered -- so those calls
+      // collapsed spread to the floor and pushed the camera to its 0.9m minimum,
+      // cropping every other character out of shot. Conflating "force" with
+      // "time zero" is why the framing kept collapsing onto whoever was first.
+      const usePresence = state.diarization?.walkins?.length && !o.allTime;
+      if(usePresence) {
         const tv = t!==undefined ? t : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
         const presentIds = new Set(presentAvatars(tv));
         const filtered = Object.entries(state.avatars).filter(([id])=> presentIds.has(id)).map(([,av])=>av);
         if(filtered.length) avatars = filtered;
+      } else {
+        // Everything that is actually on stage, not just everyone ever loaded.
+        avatars = Object.entries(state.avatars).filter(([id,av]) =>
+          av._stageVisible !== false && !(av.armature && av.armature.visible === false)).map(([,av])=>av);
+        if(!avatars.length) avatars = Object.values(state.avatars);
       }
       if(!avatars.length || !state.mainHead) return;
       const headsF=avatars.map(a=> getHeadWorldPos(a));
@@ -1152,14 +1229,23 @@
         spread = Math.max(spread, Math.hypot(dx,dz));
       }
       spread *= 1.4;
-      const hHalf = Math.atan(Math.tan((state.mainHead.camera.fov * Math.PI / 180)/2)* (state.mainHead.camera.aspect||1.77));
+      const cam = state.mainHead.camera;
+      const hHalf = Math.atan(Math.tan((cam.fov * Math.PI / 180)/2)* (cam.aspect||1.77));
       const roomW=state.lastBox ? (state.lastBox.max.x-state.lastBox.min.x) : 10;
       const maxDist=Math.min(1.8, roomW*0.25);
-      const dist = Math.max(0.9, Math.min((spread/2+0.15)/Math.tan(hHalf), maxDist));
+      // Enough distance for the WIDEST character in shot to fit vertically, not
+      // just a fixed 0.9m. At scale 0.40 the old minimum framed ~0.61m of a
+      // ~0.64m character, so heads and shoulders fitted and the body fell out of
+      // shot -- which reads as body parts vanishing.
+      const tallest = Math.max(...avatars.map(a => measureAvatarHeight(a) || 0), 0.4);
+      // Floor distance: far enough that the tallest character in shot fits
+      // vertically with a margin. Same relationship as solo framing -- divide,
+      // because visible height is 2*dist*tan(vHalf).
+      const needForHeight = (tallest * 1.15) / (2 * Math.tan((cam.fov * Math.PI / 180)/2));
+      const dist = Math.max(0.9, Math.min(Math.max((spread/2+0.15)/Math.tan(hHalf), needForHeight), maxDist));
       try {
         const camPos=new THREE.Vector3(center.x, center.y + 0.9, center.z + dist);
         const durUse = dur!==undefined ? dur : 550;
-        const o = opts||{};
         if(durUse===0) { state.mainHead.camera.position.copy(camPos); state.mainHead.camera.lookAt(center); if(state.mainHead.controls){ state.mainHead.controls.target.copy(center); state.mainHead.controls.update(); } }
         else moveCameraTo(camPos, center, durUse, o);
         if(!state._lastLog || Date.now()-state._lastLog>2000) { state._lastLog=Date.now(); console.log(`[cam] frameAvatars center ${center.x.toFixed(2)},${center.z.toFixed(2)} dist ${dist.toFixed(2)} spread ${spread.toFixed(2)} present ${avatars.length}/${Object.keys(state.avatars).length} dur ${durUse}`); }
@@ -1591,9 +1677,29 @@
       const s = av.armature.scale ? av.armature.scale.x : 1;
       console.log(`[cam] headCameraFor ${speakerId} head ${headPos.x.toFixed(2)},${headPos.y.toFixed(2)},${headPos.z.toFixed(2)} s${s.toFixed(2)} camMode ${state.cameraMode}`);
       const target = new THREE.Vector3(headPos.x, headPos.y + 0.06, headPos.z);
-      const camPos = new THREE.Vector3(headPos.x, headPos.y + 0.12, headPos.z + (0.7*s+0.50));
+      // Distance from the speaker's measured height, not a fixed offset. The old
+      // 0.7*scale + 0.50 put the camera 0.79m from the head at scale 0.40, which
+      // shows ~0.61m of a ~0.64m character -- head and shoulders, body cropped.
+      // That is what "the body disappears" was: the framing, not a visibility
+      // flag. aimFull controls how much of the character fills the frame.
+      const cam = state.mainHead.camera;
+      const vHalf = Math.tan((cam.fov * Math.PI / 180)/2);
+      const charH = measureAvatarHeight(av) || (1.6 * s);
+      const aimFull = 0.72;               // fraction of frame height to fill
+      // visibleHeight = 2*dist*tan(vHalf), and we want charH = aimFull * that,
+      // so dist = charH / (aimFull * 2 * tan(vHalf)). Multiplying instead of
+      // dividing put the camera CLOSER than the old fixed offset (0.71m vs
+      // 0.79m) and cropped more of the body, not less.
+      const fitDist = (charH / aimFull) / (2 * vHalf);
+      const minDist = 0.55 * s;
+      const soloDist = Math.max(minDist, Math.min(fitDist, 4.0));
+      // Look at the middle of the character, not the top of its head, so a full
+      // body actually sits in the middle of frame.
+      const bodyMidY = headPos.y - (charH * 0.30);
+      const lookTarget = new THREE.Vector3(headPos.x, bodyMidY, headPos.z);
+      const camPos = new THREE.Vector3(headPos.x, bodyMidY + (0.12*s), headPos.z + soloDist);
       camPos.x += 0.12*s;
-      console.log(`[cam] target ${target.x.toFixed(2)},${target.y.toFixed(2)},${target.z.toFixed(2)} camPos ${camPos.x.toFixed(2)},${camPos.y.toFixed(2)},${camPos.z.toFixed(2)} dur ${dur||450}`);
+      console.log(`[cam] target ${lookTarget.x.toFixed(2)},${lookTarget.y.toFixed(2)},${lookTarget.z.toFixed(2)} camPos ${camPos.x.toFixed(2)},${camPos.y.toFixed(2)},${camPos.z.toFixed(2)} soloDist ${soloDist.toFixed(2)} charH ${charH.toFixed(2)} dur ${dur||450}`);
       try {
         // solo should still slightly face partner, not just camera - more natural
         const partnerId = dialoguePartner(speakerId, state._playStart ? (Date.now()/1000 - state._playStart) : 0);
@@ -1612,7 +1718,7 @@
         }
         av.armature.rotation.y = yawCam;
       } catch(e) {}
-      moveCameraTo(camPos, target, dur || 450);
+      moveCameraTo(camPos, lookTarget, dur || 450);
     }
      async function loadAvatars(speakers) {
       statusEl.textContent = 'Loading avatars ' + Object.entries(speakers).map(([k,v])=>k+':'+(v.avatarUrl||'').split('/').pop()).join(', ') + '...';
@@ -1794,7 +1900,7 @@
         [...container.children].forEach((c,i)=>{ if(c!==canvas) c.remove(); });
       } catch(e) {}
       // Apply staged visibility at t=0 (first solo) + setup drag live spots
-      try { applyStageVisibility(0); frameAvatars(0,0,{force:true}); if(state._setupDrag) state._setupDrag(); } catch(e) {}
+      try { applyStageVisibility(0); frameAvatars(0,0,{force:true,allTime:true}); if(state._setupDrag) state._setupDrag(); } catch(e) {}
       const onStage = Object.values(state.avatars).filter(a => a._stageVisible).length;
       const realCount = Object.values(state.avatars).filter(a=> a.speakAudio && a.armature && a.armature.type!=='Group' || a.armature.children.some(ch=> ch.geometry && ch.geometry.morphAttributes)).length;
       statusEl.textContent = `${Object.keys(state.avatars).length} avatars ready, ${onStage} on stage (${Object.values(state.avatars).filter(a=> a.constructor.name==='TalkingHead').length} real, placeholders for offline).`;
@@ -1914,7 +2020,7 @@
     async function playIntro() {
       if(!state.diarization || !state.diarization.speakers) return;
       // Staged: wide on present at t=0 only (first solo)
-      frameAvatars(0,0,{force:true});
+      frameAvatars(0,0,{force:true,allTime:true});
       await new Promise(r=> setTimeout(r, INTRO_WIDE_MS));
       if(!state.isPlaying) return;
       const presentAt0 = presentAvatars(0);
@@ -1943,7 +2049,7 @@
       state.isPlaying = true; playBtn.disabled = true; stopBtn.disabled = false; downloadBtn.disabled = true;
       Object.values(state.avatars).forEach(av => { try { av.stop(); av.start(); } catch(e) {} });
       // Staged entrance: first speaker solo at t=0
-      applyPresentVisibility(0); frameAvatars(0,0,{force:true});
+      applyPresentVisibility(0); frameAvatars(0,0,{force:true,allTime:true});
       statusEl.textContent = 'Introducing cast...';
       await playIntro();
       if(!state.isPlaying) return; // Stop was clicked during the intro
