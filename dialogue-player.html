@@ -433,6 +433,9 @@
           // against a wall clock, so passing dt made every frame look throttled.
           try { updateGaze(Date.now()); } catch(e){}
           try { updateGazeBodies(); } catch(e){}
+          // Single owner of stage visibility, evaluated once per frame instead of
+          // from a scattering of timers and ad-hoc writes.
+          try { applyStageVisibility(); } catch(e){}
           Object.values(state.mixers).forEach(m=> { try{ m.update(dt*0.001); }catch(e){} });
           Object.values(state.walkMixers).forEach(m=> { try{ m.update(dt*0.001); }catch(e){} });
           // Follow walker camera dolly + icons
@@ -1099,7 +1102,9 @@
             }
           }
           return { id, isSpeaker: id === spk, hasTarget, targetAtHeadHeight,
-                   needYaw, facingYaw, offByDeg, facesSpeaker };
+                   needYaw, facingYaw, offByDeg, facesSpeaker,
+                   stageVisible: !!av._stageVisible,
+                   meshVisible: !!(av.armature && av.armature.visible) };
         });
         return { speaker: spk, rows };
       };
@@ -1108,6 +1113,15 @@
         return { present: isPresent(id, t), walking: isWalking(id, t),
                  isSpeaker: id === activeSpeakerAt(t),
                  eligible: isPresent(id, t) && !isWalking(id, t) && id !== activeSpeakerAt(t) };
+      };
+      // Live avatar handles, so a browser check can reproduce a competing
+      // visibility writer rather than only asserting that none exists.
+      window.__stageAvatars = state.avatars;
+      // Lets a check suspend the single-owner rule, so a competing writer can be
+      // shown to actually break the scene. Without this, applyStageVisibility()
+      // running every frame silently repairs whatever anyone else does.
+      window.__suspendStageVisibility = function(on){
+        state._suspendVisibility = !!on;
       };
     function presentAvatars(t) {
       const ids = Object.keys(state.avatars);
@@ -1338,14 +1352,49 @@
       }
     }
 
-    function applyPresentVisibility(t) {
-      const walkins = state.diarization?.walkins || [];
-      if(!walkins.length) return;
-      for(const [id, av] of Object.entries(state.avatars)) {
-        const show = isPresent(id, t);
-        try { av.armature.visible = show; av.armature.traverse(o=>{ if(o.isMesh) o.visible = show; }); } catch(e){}
+    // ------------------------------------------------------- stage visibility
+    // ONE owner. Four places used to write armature.visible directly:
+    //
+    //   * applyPresentVisibility()  -- drove it from isPresent()
+    //   * startWalkLerp()           -- forced visible = true unconditionally
+    //   * loadAvatars()             -- forced visible = true on load
+    //   * the walk-in timers        -- called applyPresentVisibility at t0 AND t1
+    //
+    // They disagreed, and the disagreement was visible: a walking character was
+    // shown by startWalkLerp, then hidden by the next applyPresentVisibility, then
+    // shown again -- appear/disappear/disappear. The player's own log showed it as
+    // "present 4/4" then "present 2/4" mid-scene, and the camera reframed each time.
+    //
+    // The rule, in priority order:
+    //   1. walking            -> always visible, or you cannot see them arrive
+    //   2. not yet entered    -> hidden
+    //   3. otherwise          -> visible
+    // Nothing else is permitted to touch visibility.
+
+    function shouldBeVisible(id, t) {
+      // Mid walk-in: visible regardless of presence, so the entrance is watchable.
+      if (isWalking(id, t)) return true;
+      return isPresent(id, t);
+    }
+
+    function applyStageVisibility(t) {
+      if (state._suspendVisibility) return;
+      const now = t !== undefined ? t
+        : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
+      for (const [id, av] of Object.entries(state.avatars)) {
+        const show = shouldBeVisible(id, now);
+        if (av._stageVisible === show) continue;   // no-op writes cause no churn
+        av._stageVisible = show;
+        try {
+          av.armature.visible = show;
+          av.armature.traverse(o => { if (o.isMesh) o.visible = show; });
+        } catch(e){}
       }
     }
+
+    // Kept as a thin alias: many call sites predate applyStageVisibility, and a
+    // rename-without-audit is how writers get lost in the first place.
+    function applyPresentVisibility(t) { applyStageVisibility(t); }
     function doorForSpeaker(sid) {
       const walkins = state.diarization?.walkins || [];
       const wk = walkins.find(w=> w.speaker===sid);
@@ -1406,8 +1455,10 @@
       })();
       // Position lerp 3m south→slot, axis auto = vector door->slot
       av.armature.position.copy(start);
-      av.armature.visible = true;
-      try { av.armature.traverse(o=>{ if(o.isMesh) o.visible=true; }); } catch(e){}
+      // Visibility belongs to applyStageVisibility() alone. It used to be forced
+      // to true here, which fought the presence pass and made characters blink
+      // out mid-walk. Record the intent and let the single owner act.
+      av._stageVisible = null;
       const yaw = Math.atan2(end.x - start.x, end.z - start.z);
       av.armature.rotation.y = yaw;
       // Follow walker camera
@@ -1664,7 +1715,10 @@
           tryHead.armature.rotation.y = cfg.rotation || 0;
           tryHead._slotPos = new THREE.Vector3(pos.x, gy+sink, pos.z);
           tryHead._slotRot = cfg.rotation || 0;
-          tryHead.armature.visible = true;
+          // Left to applyStageVisibility(): a freshly loaded avatar is not
+          // automatically on stage. _stageVisible = null forces the first pass
+          // to actually write, whichever way the rule resolves.
+          tryHead._stageVisible = null;
           try { const s=parseFloat(document.getElementById('charSize')?.value||0.5); tryHead.armature.scale.setScalar(s); } catch(e){}
           state.mainHead.scene.add(tryHead.armature);
           tryHead.speakTo = new THREE.Vector3(0, 1.6, 2);
@@ -1740,9 +1794,10 @@
         [...container.children].forEach((c,i)=>{ if(c!==canvas) c.remove(); });
       } catch(e) {}
       // Apply staged visibility at t=0 (first solo) + setup drag live spots
-      try { applyPresentVisibility(0); frameAvatars(0,0,{force:true}); if(state._setupDrag) state._setupDrag(); } catch(e) {}
+      try { applyStageVisibility(0); frameAvatars(0,0,{force:true}); if(state._setupDrag) state._setupDrag(); } catch(e) {}
+      const onStage = Object.values(state.avatars).filter(a => a._stageVisible).length;
       const realCount = Object.values(state.avatars).filter(a=> a.speakAudio && a.armature && a.armature.type!=='Group' || a.armature.children.some(ch=> ch.geometry && ch.geometry.morphAttributes)).length;
-      statusEl.textContent = `${Object.keys(state.avatars).length} avatars ready (${Object.values(state.avatars).filter(a=> a.constructor.name==='TalkingHead').length} real, placeholders for offline).`;
+      statusEl.textContent = `${Object.keys(state.avatars).length} avatars ready, ${onStage} on stage (${Object.values(state.avatars).filter(a=> a.constructor.name==='TalkingHead').length} real, placeholders for offline).`;
     }
     let audioCtx = null;
     function getAudioCtx() {
@@ -1899,8 +1954,10 @@
         const t0ms = w.t0*1000, t1ms = w.t1*1000;
         state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; startWalkLerp(w.speaker, w.t0, w.t1); }, t0ms));
         state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; frameAvatars(w.t1+0.15); }, t1ms+150));
-        state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; applyPresentVisibility(w.t0); }, t0ms));
-        state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; applyPresentVisibility(w.t1); }, t1ms));
+        // The second applyPresentVisibility(w.t1) is gone. Two calls per walk,
+        // from two writers, is what made characters blink out during their own
+        // entrance. applyStageVisibility() now runs once per frame in the render
+        // loop, which is the correct place for a rule this simple.
       }
       statusEl.textContent = 'Playing dialogue...';
       const { segments } = state.diarization;
