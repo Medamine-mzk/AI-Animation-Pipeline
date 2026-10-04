@@ -425,6 +425,14 @@
         lightAmbientIntensity: 6, lightDirectIntensity: 80, lightDirectPhi: 0.1, lightDirectTheta: 1.2, lightSpotIntensity: 20, avatarMood: 'neutral',
         update: (dt) => {
           Object.values(state.avatars).forEach(av => { try{ av.animate(dt); }catch(e){} });
+          // Listeners track whoever is speaking. updateGaze() is throttled
+          // internally; updateGazeBodies() must run every frame so the camera
+          // helpers cannot undo the body turn between ticks. Both are no-ops
+          // before playback and for single-speaker jobs.
+          // Date.now(), not dt: dt is a ~16ms delta and the throttle compares
+          // against a wall clock, so passing dt made every frame look throttled.
+          try { updateGaze(Date.now()); } catch(e){}
+          try { updateGazeBodies(); } catch(e){}
           Object.values(state.mixers).forEach(m=> { try{ m.update(dt*0.001); }catch(e){} });
           Object.values(state.walkMixers).forEach(m=> { try{ m.update(dt*0.001); }catch(e){} });
           // Follow walker camera dolly + icons
@@ -1063,6 +1071,44 @@
         return { animMode: state.animMode, lipsyncMode: state.lipsyncMode || 'auto',
                  cameraMode: state.cameraMode, smooth: !!state.isSmooth };
       };
+      // Measured gaze state, so "everyone looks at the speaker" can be checked
+      // instead of inferred. needYaw is the world yaw from a character's head to
+      // the speaker's head; facingYaw is where its body actually points. Both
+      // are world-space, because the body may sit under a rotated parent.
+      window.dialogueGaze = function(t){
+        const spk = activeSpeakerAt(t);
+        const spkHead = spk && state.avatars[spk] ? getHeadWorldPos(state.avatars[spk]) : null;
+        const rows = Object.entries(state.avatars).map(([id, av]) => {
+          const head = getHeadWorldPos(av);
+          const tgt = av.speakTo;
+          const hasTarget = !!(tgt && typeof tgt.x === 'number');
+          const targetAtHeadHeight = hasTarget ? tgt.y > 0.25 : null;
+          let needYaw = null, facingYaw = null, offByDeg = null, facesSpeaker = null;
+          if (spkHead && id !== spk) {
+            needYaw = +(Math.atan2(spkHead.x - head.x, spkHead.z - head.z) * 180 / Math.PI).toFixed(1);
+            try {
+              const d = new THREE.Vector3();
+              av.armature.getWorldDirection(d);
+              facingYaw = +(Math.atan2(d.x, d.z) * 180 / Math.PI).toFixed(1);
+            } catch(e){}
+            if (facingYaw !== null) {
+              let diff = Math.abs(needYaw - facingYaw) % 360;
+              if (diff > 180) diff = 360 - diff;
+              offByDeg = +diff.toFixed(1);
+              facesSpeaker = diff < 34;
+            }
+          }
+          return { id, isSpeaker: id === spk, hasTarget, targetAtHeadHeight,
+                   needYaw, facingYaw, offByDeg, facesSpeaker };
+        });
+        return { speaker: spk, rows };
+      };
+      window.dialogueGazeWhy = function(id){
+        const t = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
+        return { present: isPresent(id, t), walking: isWalking(id, t),
+                 isSpeaker: id === activeSpeakerAt(t),
+                 eligible: isPresent(id, t) && !isWalking(id, t) && id !== activeSpeakerAt(t) };
+      };
     function presentAvatars(t) {
       const ids = Object.keys(state.avatars);
       const wk = state.diarization?.walkins || [];
@@ -1122,6 +1168,176 @@
         return pos;
       } catch(e) { return new THREE.Vector3(0,1.6,0); }
     }
+    // ------------------------------------------------------------------ gaze
+    // Rule: everyone who is not speaking looks at whoever is.
+    //
+    // Why this needed fixing rather than enabling. Two things were already
+    // "in place" and neither worked:
+    //
+    //   1. The player assigned `speakTo = <speaker>.armature`. The engine's
+    //      lookAtCamera wants a *TalkingHead* -- it reads speakTo.objectLeftEye
+    //      to target the eye midpoint. An armature has no such property, so it
+    //      fell through to `speakTo.getWorldPosition()`, and the armature origin
+    //      is at the FEET. Listeners were aiming at the floor.
+    //   2. lookAtCamera() is only ever called while speaking, from init, or from
+    //      a gesture. A listener is not speaking, so its gaze froze at whatever
+    //      the 750ms "lookat" animation captured the first time round.
+    //
+    // Known limit, not a bug: the engine clamps head yaw to +/-0.8 rad (~46
+    // degrees). On a straight four-abreast line the far-end listener may need a
+    // 135-180 degree turn, which no amount of look-at can reach. The body turn
+    // below covers most of that gap; the remainder needs the cast staged in an
+    // arc rather than a line.
+
+    /** World-space point at the speaker's head: the eye midpoint when the
+     *  avatar exposes eye objects, else the head bone, else an estimate.
+     *  Never the armature origin, which is the floor. */
+    function gazeTargetFor(speakerAvatar) {
+      if (!speakerAvatar) return null;
+      try {
+        if (speakerAvatar.objectLeftEye && speakerAvatar.objectRightEye) {
+          const a = new THREE.Vector3().setFromMatrixPosition(speakerAvatar.objectLeftEye.matrixWorld);
+          const b = new THREE.Vector3().setFromMatrixPosition(speakerAvatar.objectRightEye.matrixWorld);
+          return a.add(b).multiplyScalar(0.5);
+        }
+      } catch(e){}
+      try {
+        if (speakerAvatar.objectHead && speakerAvatar.objectHead.isObject3D) {
+          return new THREE.Vector3().setFromMatrixPosition(speakerAvatar.objectHead.matrixWorld);
+        }
+      } catch(e){}
+      try { return getHeadWorldPos(speakerAvatar); } catch(e){ return null; }
+    }
+
+    /** Point `listener`'s gaze at `speakerAvatar` (a TalkingHead or an avatar). */
+    function aimAt(listener, speakerAvatar) {
+      if (!listener || !speakerAvatar || listener === speakerAvatar) return false;
+      const p = gazeTargetFor(speakerAvatar);
+      if (!p) return false;
+      listener.speakTo = p;
+      return true;
+    }
+
+    /** Whoever is speaking at time t, or the last known speaker between lines. */
+    function activeSpeakerAt(t) {
+      const segs = state.diarization?.segments || [];
+      const now = t !== undefined ? t
+        : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
+      for (const s of segs) {
+        if (now >= s.start && now <= s.end) return s.speaker;
+      }
+      return state._lastSpeaker || null;
+    }
+
+    /** True while `sid` is mid walk-in, i.e. not yet in the conversation. */
+    function isWalking(sid, t) {
+      const now = t !== undefined ? t
+        : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
+      return (state.diarization?.walkins || [])
+        .some(w => w.speaker === sid && now >= w.t0 && now <= w.t1);
+    }
+
+    /** Rotate `avatar`'s body toward `target`, easing 35% of the way per call.
+     *
+     *  `target` is the other avatar (or an explicit world point). Both the
+     *  listener's head and the target point are derived here rather than assumed
+     *  -- an earlier version referenced `head`/`from` without ever defining them,
+     *  so every call threw a ReferenceError that the surrounding catch swallowed,
+     *  and no body ever turned while the eyes looked correct.
+     *
+     *  Works in the parent's frame: a nested armature's local rotation.y does
+     *  not equal its world yaw, and the camera helpers write local rotation too. */
+    function turnBodyToward(avatar, target) {
+      if (!avatar || !avatar.armature) return false;
+      try {
+        const head = getHeadWorldPos(avatar);
+        const from = (target && typeof target.x === 'number') ? target
+                                                           : getHeadWorldPos(target);
+        if (!from || !head) return false;
+
+        // Yaw of the parent, so local and world rotations can be compared.
+        let parentYaw = 0;
+        try {
+          const parent = avatar.armature.parent;
+          if (parent) {
+            const pd = new THREE.Vector3();
+            parent.getWorldDirection(pd);
+            parentYaw = Math.atan2(pd.x, pd.z);
+          }
+        } catch(e){}
+
+        const wrap = (v) => {
+          let x = v;
+          while (x > Math.PI) x -= Math.PI * 2;
+          while (x < -Math.PI) x += Math.PI * 2;
+          return x;
+        };
+
+        const worldWant = Math.atan2(from.x - head.x, from.z - head.z);
+        const dir = new THREE.Vector3();
+        avatar.armature.getWorldDirection(dir);
+        const worldCur = Math.atan2(dir.x, dir.z);
+
+        const yawWant = wrap(worldWant - parentYaw);
+        const yawCur = wrap(worldCur - parentYaw);
+        const diff = wrap(yawWant - yawCur);
+        if (Math.abs(diff) < 0.005) return false;   // already there
+
+        // Partial step: this runs every frame, so a full snap would look robotic.
+        avatar.armature.rotation.y = yawCur + diff * 0.35;
+        return true;
+      } catch(e) {
+        return false;
+      }
+    }
+
+    // Each lookAtCamera() pushes a fresh "lookat" animation into the engine's
+    // queue, so the eyes/head pass is throttled. The body pass is a plain
+    // rotation write with no queue cost and runs per frame, because the camera
+    // helpers (headCameraFor, placeDialogueCam, faceEachOther) also write
+    // armature.rotation.y and would otherwise undo it between throttled ticks.
+    const GAZE_INTERVAL_MS = 250;
+    let _gazeAt = 0;
+    let _bodySpeakerAvatar = null;
+
+    function updateGaze(nowMs) {
+      const speakerId = activeSpeakerAt();
+      if (!speakerId) return;
+      const speakerAvatar = state.avatars[speakerId];
+      if (!speakerAvatar) return;
+      if ((nowMs - _gazeAt) < GAZE_INTERVAL_MS) return;
+      _gazeAt = nowMs;
+      // One snapshot of playback time for the whole pass: isPresent/isWalking
+      // each recompute it from Date.now() when omitted, so calling them
+      // separately could straddle a frame and disagree.
+      const t = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
+
+      for (const [id, av] of Object.entries(state.avatars)) {
+        // The speaker faces the audience; headCameraFor and faceEachOther own
+        // that, deliberately presenting the face to camera. Do not fight them.
+        if (id === speakerId) continue;
+        // Not on stage yet, or still walking in: not in the conversation.
+        if (!isPresent(id, t)) continue;
+        if (isWalking(id, t)) continue;
+        aimAt(av, speakerAvatar);
+        // Placeholder avatars are stubs with no engine; body turn still applies.
+        try { if (typeof av.lookAtCamera === 'function') av.lookAtCamera(500); } catch(e){}
+      }
+      _bodySpeakerAvatar = speakerAvatar;
+    }
+
+    /** Per-frame body turn for listeners; runs after the camera helpers. */
+    function updateGazeBodies() {
+      const speakerAvatar = _bodySpeakerAvatar;
+      if (!speakerAvatar) return;
+      const t = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
+      for (const [id, av] of Object.entries(state.avatars)) {
+        if (av === speakerAvatar) continue;
+        if (!isPresent(id, t) || isWalking(id, t)) continue;
+        turnBodyToward(av, speakerAvatar);
+      }
+    }
+
     function applyPresentVisibility(t) {
       const walkins = state.diarization?.walkins || [];
       if(!walkins.length) return;
@@ -1291,7 +1507,17 @@
         let score=0;
         for(const m of members) {
           let look = new THREE.Vector3(0,0,1);
-          try { if(m.speakTo && m.speakTo.isVector3) look.subVectors(m.speakTo, getHeadWorldPos(m)).normalize(); else m.armature.getWorldDirection(look); look.y=0; look.normalize(); } catch(e){ look.set(0,0,1); }
+          // speakTo is now always a world-space point, but it used to change type
+          // mid-session -- Vector3 at load, then an armature on the first
+          // segment -- so this branch silently flipped. Accept any point-like
+          // value; otherwise fall back to the avatar's own facing.
+          try {
+            const t = m.speakTo;
+            if (t && (t.isVector3 || (typeof t.x === 'number' && typeof t.z === 'number'))) {
+              look.subVectors(t, getHeadWorldPos(m)).normalize();
+            } else { m.armature.getWorldDirection(look); }
+            look.y=0; look.normalize();
+          } catch(e){ look.set(0,0,1); }
           score += look.dot(cand.clone().negate());
         }
         if(score > bestScore) { bestScore=score; bestSide=cand; }
@@ -1697,7 +1923,16 @@
           if (!state.isPlaying) return;
           speakerLabel.textContent = speakerName; speakerLabel.classList.add('active');
           subtitleBox.textContent = seg.text; subtitleBox.classList.add('active');
-          Object.entries(state.avatars).forEach(([id, av]) => { if (id === seg.speaker) av.speakTo = null; else av.speakTo = avatar.armature; });
+          // Everyone who is not speaking looks at whoever is. Aim at the speaker's
+          // HEAD -- this used to assign `avatar.armature`, whose origin is the
+          // floor, so the engine's lookAtCamera resolved the target to the
+          // speaker's feet. The speaker keeps facing the camera.
+          state._lastSpeaker = seg.speaker;
+          Object.entries(state.avatars).forEach(([id, av]) => {
+            if (id === seg.speaker) { av.speakTo = null; return; }
+            if (!isPresent(id, seg.start) || isWalking(id, seg.start)) return;
+            aimAt(av, avatar);
+          });
           const walkActiveAt = (state.diarization?.walkins||[]).find(w=> seg.start >= w.t0 && seg.start < w.t1);
       // walk has absolute priority - don't do segment camera during walk, let walker be visible
       if (walkActiveAt) {
