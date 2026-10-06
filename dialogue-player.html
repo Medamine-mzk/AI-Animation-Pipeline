@@ -237,7 +237,14 @@
       const cam=state.mainHead.camera, ctrl=state.mainHead.controls;
       const curTarget=ctrl ? ctrl.target.clone() : targetLookAt.clone();
       if(!opts.force && cam.position.distanceTo(targetPos)<0.03 && curTarget.distanceTo(targetLookAt)<0.03) return;
-      state.camTween={fromPos:cam.position.clone(), toPos:targetPos.clone(), fromTarget:curTarget, toTarget:targetLookAt.clone(), start:performance.now(), dur:duration};
+      // Generation guard. Every request supersedes the previous one, and a
+      // tween only writes while it is still the newest. Previously two camera
+      // requests 200ms apart each stored their own fromPos, so the older tween
+      // kept lerping the camera back toward a shot nobody wanted -- a move that
+      // was already cancelled still had its say, and the result was a camera
+      // pointing at empty space while the dialogue played on.
+      state.camTweenGen = (state.camTweenGen || 0) + 1;
+      state.camTween={gen:state.camTweenGen, fromPos:cam.position.clone(), toPos:targetPos.clone(), fromTarget:curTarget, toTarget:targetLookAt.clone(), start:performance.now(), dur:duration};
       if(ctrl) ctrl.enabled=false;
     }
     function tickCameraTween(dtMs){
@@ -262,6 +269,13 @@
       }
       const tw=state.camTween;
       if(!tw || !state.mainHead) return;
+      // Superseded by a newer request: hand the camera over rather than both
+      // writing to it, and re-enable controls the newer tween disabled.
+      if(tw.gen !== undefined && state.camTweenGen !== undefined && tw.gen !== state.camTweenGen){
+        state.camTween=null;
+        if(state.mainHead.controls) state.mainHead.controls.enabled=false;
+        return;
+      }
       const cam=state.mainHead.camera, ctrl=state.mainHead.controls;
       const u=Math.min(1, (performance.now()-tw.start)/tw.dur);
       const e=easeInOutCubic(u);
@@ -272,6 +286,12 @@
       if(u>=1){ state.camTween=null; if(ctrl){ ctrl.enabled=true; ctrl.update(); } }
     }
     const container = document.getElementById('scene-container');
+    // Build stamp. Cached HTML made this unbearably hard to debug: the browser
+    // reported the bug still happening while it was running a build from before
+    // the fix, and the only way to tell was to compare a console log's format.
+    // This makes "which build am I running" a one-line question.
+    window.__playerBuild = '2026-10-05-stagewatchdog-1';
+    console.log('[build] dialogue-player ' + window.__playerBuild);
     const statusEl = document.getElementById('status');
     const playBtn = document.getElementById('playBtn');
     const stopBtn = document.getElementById('stopBtn');
@@ -441,6 +461,10 @@
           // Follow walker camera dolly + icons
           try { if(state._walkFollow && state.isPlaying) updateWalkCamera(); } catch(e){}
           try { if(state.isPlaying && state._playStart) updateIcons(Date.now()/1000 - state._playStart); } catch(e){}
+          // Last word: run after every other step so nothing in this frame can
+          // undo it, and so a character that stops being renderable is reported
+          // in the same frame it happens.
+          try { stageWatchdog(); } catch(e){}
         }
       });
       // FIX: TalkingHead hardcodes a 10° FOV internally, meant to be paired with its
@@ -879,9 +903,21 @@
             if(state.bgGroup && saved.bgTransform.scale) state.bgGroup.scale.setScalar(saved.bgTransform.scale);
             if(saved.bgTransform.position) state.bgGroup.position.fromArray(saved.bgTransform.position);
           }
-          // Don't restore sky camera (y>2.35) — hybrid will frame correctly
+          // Don't restore sky cameras (y>2.35) — hybrid will frame correctly.
+          //
+          // A height check was never enough. A camera at y=1.83 is not a sky
+          // camera, so it passed, and it was restored verbatim — while being
+          // physically unable to see its own stage: at fov 42 the frustum at the
+          // near (back) row of spots covers only y 1.01..1.74, i.e. the top 0.73
+          // of a ~1.75 character, so that whole row rendered as a floating head
+          // or not at all. Nobody appeared "hidden"; the camera simply was not
+          // pointed at them. So the restored camera is now verified against the
+          // actual stage and discarded if it fails.
           if(saved.camera && state.mainHead && saved.camera.position && saved.camera.position.y < 2.3){
             try{ state.mainHead.camera.position.copy(saved.camera.position); state.mainHead.controls.target.copy(saved.camera.target); if(saved.fov) state.mainHead.camera.fov=saved.fov; state.mainHead.camera.updateProjectionMatrix(); }catch(e){}
+            // Avatars may not be loaded yet on the init call; ensureStageFramed
+            // returns false and we retry once they are (see ensureStageFramedLater).
+            if(!ensureStageFramed('restored')) ensureStageFramedLater();
           }
           console.log('[merge] picker_live 1.119 merged, bg', saved.background, 'scale', saved.bgTransform?.scale);
         } catch(e){ console.warn('[merge] fail', e); }
@@ -1158,6 +1194,131 @@
         return { minX, maxX, minY, maxY,
                  fullyIn: minX >= -1 && maxX <= 1 && minY >= -1 && maxY <= 1 };
       };
+      // Can the current camera actually see its own cast?
+      //
+      // Returns the characters that are NOT fully in shot, plus a one-line reason.
+      // "Fully in shot" means the whole bounding box projects inside NDC -1..1,
+      // i.e. the character is rendered end to end rather than sliced by the
+      // frustum. A character can be perfectly visible according to
+      // applyStageVisibility() and still be invisible because the camera is
+      // pointing somewhere else entirely; those are different failures and this
+      // only measures the second one.
+      window.__castOutsideCamera = function(){
+        const ids = Object.keys(state.avatars || {});
+        if (!ids.length || !state.mainHead) return null;   // nothing to judge yet
+        const out = [];
+        for (const id of ids) {
+          const n = window.__avatarNdc(id);
+          if (!n) continue;
+          if (!n.fullyIn) {
+            const side = n.maxX > 1 ? 'right' : n.minX < -1 ? 'left' : '';
+            const vert = n.maxY > 1 ? 'head cut off' : n.minY < -1 ? 'body cut off' : '';
+            out.push({ id, minX: n.minX, maxX: n.maxX, minY: n.minY, maxY: n.maxY,
+                       why: [side && 'cropped ' + side, vert].filter(Boolean).join(', ') });
+          }
+        }
+        return out;
+      };
+      // If the camera cannot see the cast, reframe. Called after any restore of a
+      // saved camera, because a saved camera is the one input we never verify.
+      function ensureStageFramed(reason) {
+        const out = window.__castOutsideCamera();
+        if (!out) return false;               // avatars not loaded yet; caller retries later
+        if (!out.length) return true;
+        const names = out.map(o => o.id).join(', ');
+        const why = out[0].why || 'outside frustum';
+        console.warn(`[cam] saved camera (${reason}) cannot see ${names} - ${why}; reframing`);
+        try { frameAvatars(0, 0, { force: true, allTime: true }); } catch(e) {}
+        return false;
+      }
+      window.ensureStageFramed = ensureStageFramed;
+      // Live camera state, for diagnosing "the screen is empty" without guessing.
+      window.__stageCam = function(){
+        const c = state.mainHead && state.mainHead.camera;
+        if (!c) return null;
+        const t = state.mainHead.controls ? state.mainHead.controls.target : null;
+        return { pos: c.position.toArray().map(n=>+n.toFixed(3)),
+                 target: t ? t.toArray().map(n=>+n.toFixed(3)) : null,
+                 fov: c.fov, aspect: +(c.aspect||0).toFixed(3),
+                 tweening: !!state.camTween, mode: state.cameraMode,
+                 charH: Object.fromEntries(Object.entries(state.avatars).map(([id,a])=>[id, +(measureAvatarHeight(a)||0).toFixed(3)])) };
+      };
+      // Stage watchdog: prove that every character which SHOULD be on stage is
+      // actually renderable, and describe the moment one is not.
+      //
+      // Added because static reasoning kept failing here. There is exactly one
+      // writer of .visible (applyStageVisibility, below) and isPresent() is
+      // monotonic, so the cast "cannot" blink -- yet in a real browser every
+      // character disappears at once while the camera stays put. Two global
+      // faults produce exactly that, and both are visible in one log line:
+      //
+      //   * the playback clock jumping backwards or being cleared, since every
+      //     presence test reads Date.now()/1000 - _playStart; and
+      //   * state.avatars being rebuilt, since loadAvatars() empties the map and
+      //     disposes the old armatures, removing the whole cast in one tick.
+      //
+      // Debounced to one line per 2s per character so a single playthrough stays
+      // readable instead of flooding the console.
+      const _wd = { id: null, lastNow: null, mute: {}, events: 0 };
+      function stageWatchdog() {
+        try {
+          const now = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
+          // Clock health: playback time must never go backwards.
+          let clockBack = false;
+          if (_wd.lastNow !== null && now < _wd.lastNow - 0.05) clockBack = true;
+          _wd.lastNow = now;
+          // Cast identity: a rebuild shows up as a changed object.
+          if (_wd.id === null) _wd.id = state.avatars;
+          const rebuilt = _wd.id !== state.avatars;
+          if (rebuilt) _wd.id = state.avatars;
+          const cam = state.mainHead ? state.mainHead.camera : null;
+          const camP = cam ? cam.position.toArray().map(n=>+n.toFixed(2)) : null;
+          const camT = state.mainHead && state.mainHead.controls
+            ? state.mainHead.controls.target.toArray().map(n=>+n.toFixed(2)) : null;
+          for (const [id, av] of Object.entries(state.avatars || {})) {
+            if (!av || !av.armature) continue;
+            const want = shouldBeVisible(id, now);
+            if (!want) continue;                       // correctly off stage: not a failure
+            const bad = [];
+            if (av.armature.visible !== true) bad.push('armatureHidden');
+            if (!av.armature.parent) bad.push('removedFromScene');
+            let box = null;
+            try { box = new THREE.Box3().setFromObject(av.armature); } catch(e){}
+            if (!box || !isFinite(box.min.x) || !isFinite(box.max.x)) bad.push('degenerateBox');
+            else if ((box.max.x-box.min.x) < 1e-4 && (box.max.y-box.min.y) < 1e-4) bad.push('boxCollapsed');
+            const s = av.armature.scale ? av.armature.scale.x : 1;
+            if (!(Math.abs(s) > 1e-4)) bad.push('scaleZero');
+            if (!bad.length) continue;
+            const muteKey = id + '|' + bad.join(',');
+            const tNow = Date.now();
+            if (_wd.mute[muteKey] && tNow - _wd.mute[muteKey] < 2000) continue;
+            _wd.mute[muteKey] = tNow;
+            _wd.events++;
+            console.warn('[watchdog] ' + id + ' not renderable: ' + bad.join(',') +
+              ' | t=' + now.toFixed(2) + ' playStart=' + (state._playStart || 0).toFixed(2) +
+              ' clockBackwards=' + clockBack + ' rebuilt=' + rebuilt +
+              ' vis=' + av.armature.visible + ' cache=' + av._stageVisible +
+              ' pos=' + av.armature.position.toArray().map(n=>+n.toFixed(2)) +
+              ' scale=' + s.toFixed(3) + ' charH=' + (measureAvatarHeight(av)||0).toFixed(3) +
+              ' cam=' + JSON.stringify(camP) + '->' + JSON.stringify(camT));
+          }
+        } catch(e){}
+      }
+      window.__stageWatchdogLog = function(){ return _wd; };
+      // The saved camera is restored on init, before avatars exist, so there is
+      // nothing to project yet and the verdict is unknown. Retry once the cast is
+      // on stage. Without this the bad camera survives until someone drags
+      // something, which is exactly how it got saved in the first place.
+      function ensureStageFramedLater() {
+        let tries = 0;
+        const tick = () => {
+          tries++;
+          if (state.isPlaying) return;              // playback drives the camera now
+          if (Object.keys(state.avatars || {}).length && ensureStageFramed('deferred')) return;
+          if (tries < 60) setTimeout(tick, 250);
+        };
+        setTimeout(tick, 250);
+      }
       // Lets a check suspend the single-owner rule, so a competing writer can be
       // shown to actually break the scene. Without this, applyStageVisibility()
       // running every frame silently repairs whatever anyone else does.
@@ -1217,38 +1378,63 @@
         if(!avatars.length) avatars = Object.values(state.avatars);
       }
       if(!avatars.length || !state.mainHead) return;
-      const headsF=avatars.map(a=> getHeadWorldPos(a));
-      const center = new THREE.Vector3(0,0,0);
-      headsF.forEach(h=> center.add(h));
-      center.divideScalar(headsF.length);
-      center.y += 0.45;
-      let spread = 0.6;
-      for(let i=0;i<headsF.length;i++) for(let j=i+1;j<headsF.length;j++) {
-        const dx = headsF[i].x - headsF[j].x;
-        const dz = headsF[i].z - headsF[j].z;
-        spread = Math.max(spread, Math.hypot(dx,dz));
-      }
-      spread *= 1.4;
+      // Frame the union of everybody in shot, and size the camera to that box.
+      //
+      // The previous version centred on the mean HEAD position, spread the
+      // distance from the widest pair of heads, and then clamped the result to
+      // `Math.min(1.8, roomW*0.25)` -- and since roomW defaulted to 10 that clamp
+      // was effectively a hard 1.8-unit ceiling. Any group spread wider than
+      // about 1.8 units therefore could not fit no matter what the spread said:
+      // the distance was demanded, then silently thrown away. A four-character
+      // scene on a 2.87 spread needed ~2.6 and got 1.8, which put the outer two
+      // outside the frustum and sliced the near two at the knees. That was the
+      // whole "characters vanish" report: not visibility, and not even the saved
+      // camera -- frameAvatars() itself could not frame a wide stage.
+      const box = new THREE.Box3();
+      try { if (state.mainHead && state.mainHead.scene) state.mainHead.scene.updateMatrixWorld(true); } catch(e){}
+      avatars.forEach(a => { try { box.expandByObject(a.armature); } catch(e){} });
+      if (box.isEmpty() || !isFinite(box.min.x)) return;
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
       const cam = state.mainHead.camera;
-      const hHalf = Math.atan(Math.tan((cam.fov * Math.PI / 180)/2)* (cam.aspect||1.77));
-      const roomW=state.lastBox ? (state.lastBox.max.x-state.lastBox.min.x) : 10;
-      const maxDist=Math.min(1.8, roomW*0.25);
-      // Enough distance for the WIDEST character in shot to fit vertically, not
-      // just a fixed 0.9m. At scale 0.40 the old minimum framed ~0.61m of a
-      // ~0.64m character, so heads and shoulders fitted and the body fell out of
-      // shot -- which reads as body parts vanishing.
-      const tallest = Math.max(...avatars.map(a => measureAvatarHeight(a) || 0), 0.4);
-      // Floor distance: far enough that the tallest character in shot fits
-      // vertically with a margin. Same relationship as solo framing -- divide,
-      // because visible height is 2*dist*tan(vHalf).
-      const needForHeight = (tallest * 1.15) / (2 * Math.tan((cam.fov * Math.PI / 180)/2));
-      const dist = Math.max(0.9, Math.min(Math.max((spread/2+0.15)/Math.tan(hHalf), needForHeight), maxDist));
+      const vHalf = (cam.fov * Math.PI / 180) / 2;
+      // Fit every corner of the box, not just its lateral extent.
+      //
+      // Measuring only size.x and dividing by the field of view assumes every
+      // character sits at the centre's depth. The near row does not: standing
+      // ~0.5 units closer to the camera, the same lateral offset eats a larger
+      // share of the frustum, so a fit computed for the centre depth still
+      // crops the nearest characters -- which is exactly what the outer pair
+      // kept hitting. For a corner at offset (dx,dy) from the look-at point the
+      // needed distance is max(|dx|/tan(hHalf), |dy|/tan(vHalf)), so the
+      // required distance is the worst case over all eight corners.
+      const halfV = Math.tan(vHalf);
+      const halfH = halfV * (cam.aspect || 1.77);
+      let need = 0.9;
+      for (let i = 0; i < 8; i++) {
+        const px = (i & 1) ? box.max.x : box.min.x;
+        const py = (i & 2) ? box.max.y : box.min.y;
+        const pz = (i & 4) ? box.max.z : box.min.z;
+        // The camera sits at center.z + D, so a corner nearer the viewer than the
+        // centre is D-dz away, not D. Its usable half-width is therefore
+        // (D-dz)*halfH, which means it needs |dx|/halfH + dz -- the depth offset
+        // has to be added. Without that term the near row is silently
+        // under-budgeted and lands outside the frustum: measured at x 1.22..1.80
+        // (whole body right of frame) while the far row, same layout, fitted.
+        const dz = pz - center.z;
+        need = Math.max(need, Math.abs(px - center.x) / halfH + dz, Math.abs(py - center.y) / halfV + dz);
+      }
+      // Only a sanity ceiling -- there must be no fixed one, or any stage wider
+      // than the ceiling becomes impossible to frame.
+      const dist = Math.max(0.9, Math.min(need * 1.10, 40));
       try {
-        const camPos=new THREE.Vector3(center.x, center.y + 0.9, center.z + dist);
-        const durUse = dur!==undefined ? dur : 550;
+        // Sit slightly above centre and look at it, so feet and head are both
+        // inside rather than aiming at the middle of the heads.
+        const camPos = new THREE.Vector3(center.x, center.y + size.y * 0.08, center.z + dist);
+        const durUse = dur !== undefined ? dur : 550;
         if(durUse===0) { state.mainHead.camera.position.copy(camPos); state.mainHead.camera.lookAt(center); if(state.mainHead.controls){ state.mainHead.controls.target.copy(center); state.mainHead.controls.update(); } }
         else moveCameraTo(camPos, center, durUse, o);
-        if(!state._lastLog || Date.now()-state._lastLog>2000) { state._lastLog=Date.now(); console.log(`[cam] frameAvatars center ${center.x.toFixed(2)},${center.z.toFixed(2)} dist ${dist.toFixed(2)} spread ${spread.toFixed(2)} present ${avatars.length}/${Object.keys(state.avatars).length} dur ${durUse}`); }
+        if(!state._lastLog || Date.now()-state._lastLog>2000) { state._lastLog=Date.now(); console.log(`[cam] frameAvatars box ${size.x.toFixed(2)}x${size.y.toFixed(2)}x${size.z.toFixed(2)} dist ${dist.toFixed(2)} need ${need.toFixed(2)} cast ${avatars.length}/${Object.keys(state.avatars).length} dur ${durUse}`); }
       } catch(e) { console.warn('frameAvatars failed', e); }
     }
      function getHeadWorldPos(avatar) {
@@ -1469,7 +1655,18 @@
         : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
       for (const [id, av] of Object.entries(state.avatars)) {
         const show = shouldBeVisible(id, now);
-        if (av._stageVisible === show) continue;   // no-op writes cause no churn
+        // No early exit. `_stageVisible` records what this function last WROTE, not
+        // what `armature.visible` currently IS, so skipping the write whenever the
+        // boolean happens to match means this can never repair a mesh that
+        // something else hid. Anything that touches visibility independently --
+        // avatar loading, an entrance, the engine -- leaves a character
+        // permanently invisible while applyStageVisibility reports it present,
+        // and the audio plays regardless because speakAudio never checks render
+        // state. That is "I can hear them but I cannot see them", and it is why
+        // the presence logic could be provably correct (isPresent() true at 9s)
+        // while the character stayed hidden. Writing unconditionally costs one
+        // boolean and a short traverse per avatar per frame, and closes the class
+        // of bug rather than one instance of it.
         av._stageVisible = show;
         try {
           av.armature.visible = show;
@@ -1478,7 +1675,25 @@
       }
     }
 
-    // Kept as a thin alias: many call sites predate applyStageVisibility, and a
+    // Should-be-visible versus actually-visible. isPresent() and
+      // armature.visible were able to disagree for a long time with nothing
+      // surfacing it: the schedule said the character was on stage, the render
+      // state said otherwise, and playback carried on regardless. This reports
+      // the disagreement directly instead of inferring it from a screenshot.
+      window.__visibilityTruth = function(t){
+        const now = t !== undefined ? t
+          : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
+        const out = { t: +now.toFixed(2), rows: {}, mismatches: [] };
+        for (const [id, av] of Object.entries(state.avatars || {})) {
+          if (!av || !av.armature) continue;
+          const want = shouldBeVisible(id, now);
+          const is = av.armature.visible;
+          out.rows[id] = { want, is, cache: av._stageVisible };
+          if (want !== is) out.mismatches.push(id);
+        }
+        return out;
+      };
+      // Kept as a thin alias: many call sites predate applyStageVisibility, and a
     // rename-without-audit is how writers get lost in the first place.
     function applyPresentVisibility(t) { applyStageVisibility(t); }
     function doorForSpeaker(sid) {
@@ -1494,14 +1709,22 @@
       if(!wf || !state.mainHead) return;
       const av = state.avatars[wf.sid];
       if(!av || !av.armature) return;
-      const head = getHeadWorldPos(av);
-      // Follow walker: camera trails 1.2m behind + 0.6m up, look at head
-      const yaw = av.armature.rotation.y;
-      const cam = state.mainHead.camera;
-      const behind = new THREE.Vector3(-Math.sin(yaw)*1.4, 0.5, -Math.cos(yaw)*1.4);
-      cam.position.copy(head.clone().add(behind));
-      cam.lookAt(head);
-      if(state.mainHead.controls) { state.mainHead.controls.target.copy(head); }
+      // Frame the cast, do not chase the walker's neck.
+      //
+      // This used to pin the camera 1.4m directly behind the walker, aimed at
+      // their head, rewriting the transform every frame. Anyone else on stage
+      // was simply outside that frustum -- and because it wrote the camera
+      // directly it also fought every tween, so the 550ms group reframe issued
+      // at the end of the walk was still in flight 0.2s later when the walker's
+      // own solo shot started, and the two overwrote each other. That is the
+      // reported bug exactly: your line "Well, I'm not sure" is SPEAKER_01 at
+      // 8.64s, her walk ends at 8.44s, and in that window the girl who is
+      // standing 1.8m away was off-screen while the audio kept playing.
+      //
+      // Framing the whole on-stage cast instead keeps the arriving character in
+      // shot *and* keeps everyone already present on screen, and because
+      // frameAvatars routes through moveCameraTo it no longer fights tweens.
+      try { frameAvatars(0, 0, { force: true, allTime: true }); } catch(e){}
       // Check end
       if(performance.now() - wf.tStart >= wf.dur) {
         state._walkFollow = null;
@@ -1692,7 +1915,47 @@
       // 0.79m) and cropped more of the body, not less.
       const fitDist = (charH / aimFull) / (2 * vHalf);
       const minDist = 0.55 * s;
-      const soloDist = Math.max(minDist, Math.min(fitDist, 4.0));
+      let soloDist = Math.max(minDist, Math.min(fitDist, 4.0));
+      // A solo shot must never push another character who is already on stage out
+      // of frame.
+      //
+      // This was the actual "I can hear her but I cannot see her" bug. The shot
+      // was sized from the speaker alone, so with two characters on stage the
+      // other one fell outside the frustum entirely -- measured at NDC x
+      // -1.57..-1.30, i.e. wholly off-screen -- while the speaker herself was so
+      // small (x -0.06..0.06, six percent of frame width) that the frame read as
+      // empty. Nobody was hidden: the camera was simply pointed at a face from
+      // far enough away to lose everyone else. So the solo distance is now the
+      // larger of "fits the speaker" and "still contains everyone on stage".
+      try {
+        const stageIds = new Set(Object.entries(state.avatars)
+          .filter(([, a]) => a && a.armature && a._stageVisible !== false && a.armature.visible !== false)
+          .map(([id]) => id));
+        stageIds.add(speakerId);
+        const others = Object.entries(state.avatars)
+          .filter(([id, a]) => stageIds.has(id) && a && a.armature && id !== speakerId)
+          .map(([, a]) => a);
+        if (others.length) {
+          const cam0 = state.mainHead.camera;
+          const hV = Math.tan((cam0.fov * Math.PI / 180) / 2);
+          const hH = hV * (cam0.aspect || 1.77);
+          // Required distance so each other character's box stays inside, measured
+          // from the speaker's own position along +Z.
+          let need = soloDist;
+          others.forEach(a => {
+            let b;
+            try { b = new THREE.Box3().setFromObject(a.armature); } catch(e){ return; }
+            if (!isFinite(b.min.x)) return;
+            const corners = [[b.min.x,b.min.y],[b.max.x,b.min.y],[b.min.x,b.max.y],[b.max.x,b.max.y]];
+            const midY = (b.min.y + b.max.y) / 2;
+            corners.forEach(([px, py]) => {
+              const dz = b.max.z - headPos.z;
+              need = Math.max(need, Math.abs(px - headPos.x) / hH + dz, Math.abs(py - midY) / hV + dz);
+            });
+          });
+          soloDist = Math.min(Math.max(soloDist, need * 1.06), 40);
+        }
+      } catch(e) {}
       // Look at the middle of the character, not the top of its head, so a full
       // body actually sits in the middle of frame.
       const bodyMidY = headPos.y - (charH * 0.30);

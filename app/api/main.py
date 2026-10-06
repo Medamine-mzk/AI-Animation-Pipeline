@@ -1792,14 +1792,35 @@ async def get_result(job_id: str):
     }
 
 
+#: Headers that stop a browser from silently reusing a stale copy of the app's
+#: own code. Without an explicit Cache-Control, Chrome applies heuristic freshness
+#: from Last-Modified and may serve an old HTML file without revalidating at all --
+#: which is exactly what happened: an edited dialogue-player.html kept running the
+#: pre-fix build, so a fixed bug was reported as still broken across several rounds
+#: of debugging, and a hard refresh did not help.
+#:
+#: Scoped deliberately. HTML and JS/CSS must never be stale, because a stale module
+#: silently changes behaviour. Large media (FBX/GLB/audio) stays cacheable so it is
+#: not re-streamed on every reload.
+NO_STORE_HEADERS = {
+    "Cache-Control": "no-store, must-revalidate",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+def _no_store_html(path: str) -> FileResponse:
+    return FileResponse(path, headers=dict(NO_STORE_HEADERS))
+
+
 @app.get("/")
 async def root():
-    return FileResponse(str(ROOT / "index.html"))
+    return _no_store_html(str(ROOT / "index.html"))
 
 
 @app.get("/index.html")
 async def index():
-    return FileResponse(str(ROOT / "index.html"))
+    return _no_store_html(str(ROOT / "index.html"))
 
 
 #: Model directories the captions pipeline needs before it can transcribe. Their
@@ -1899,17 +1920,17 @@ async def health():
 
 @app.get("/config.html")
 async def cfg():
-    return FileResponse(str(ROOT / "config.html"))
+    return _no_store_html(str(ROOT / "config.html"))
 
 
 @app.get("/dialogue-player.html")
 async def player():
-    return FileResponse(str(ROOT / "dialogue-player.html"))
+    return _no_store_html(str(ROOT / "dialogue-player.html"))
 
 
 @app.get("/animation-settings.html")
 async def anim_settings():
-    return FileResponse(str(ROOT / "animation-settings.html"))
+    return _no_store_html(str(ROOT / "animation-settings.html"))
 
 
 # Static mounts. The directories are created first on purpose: jobs/, media/ and
@@ -1920,11 +1941,35 @@ async def anim_settings():
 for _mount in ("assets", "jobs", "app", "tools", "media", "jobs_captions"):
     (ROOT / _mount).mkdir(parents=True, exist_ok=True)
 
-app.mount("/assets", StaticFiles(directory=str(ROOT / "assets")), name="assets")
 app.mount("/jobs", StaticFiles(directory=str(ROOT / "jobs")), name="jobs")
 app.mount("/app", StaticFiles(directory=str(ROOT / "app")), name="app")
 app.mount("/tools", StaticFiles(directory=str(ROOT / "tools")), name="tools")
 app.mount("/media", StaticFiles(directory=str(ROOT / "media")), name="media")
+
+
+class NoStoreScripts(StaticFiles):
+    """Serve JS/CSS uncached, and leave heavy media cacheable.
+
+    ES modules such as assets/talkinghead.mjs are cached harder than HTML and a
+    stale copy changes behaviour silently -- gaze, lip-sync and visibility all
+    live in that one file. Only script/style extensions are affected, so FBX, GLB
+    and audio under /assets still stream from cache.
+    """
+
+    _UNCACHEABLE = (".js", ".mjs", ".css", ".map")
+
+    def file_response(self, *args, **kwargs):
+        response = super().file_response(*args, **kwargs)
+        path = str(args[0]) if args else str(kwargs.get("path", ""))
+        if path.lower().endswith(self._UNCACHEABLE):
+            response.headers.update(NO_STORE_HEADERS)
+        return response
+
+
+# Only one /assets mount: Starlette matches mounts in registration order, so a
+# plain mount listed first would shadow the subclass entirely and the headers
+# would never be applied.
+app.mount("/assets", NoStoreScripts(directory=str(ROOT / "assets")), name="assets")
 
 # Captions feature (video -> burned-in captions). Self-contained router; it reads
 # and writes only jobs/cap_{id}/ and never touches the 3D feature's jobs.
