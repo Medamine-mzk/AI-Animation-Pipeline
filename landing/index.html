@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AI Animation Pipeline — Comment l'exécuter en local</title>
+<meta name="description" content="Audio vers dialogue 3D animé. L'hébergement gratuit ne suffit pas : les modèles de reconnaissance vocale dépassent la mémoire disponible. Voici comment l'exécuter en local avec Docker.">
+<meta property="og:title" content="AI Animation Pipeline — Comment l'exécuter en local">
+<meta property="og:description" content="L'hébergement gratuit ne peut pas exécuter ce projet. Marche à suivre Docker et installation locale.">
+<meta property="og:type" content="website">
+<script src="https://cdn.tailwindcss.com"></script>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=Inter:wght@400;600&display=swap" rel="stylesheet">
+<style>
+  *{font-family:'Inter',sans-serif}
+  h1,h2,h3{font-family:'Space Grotesk',sans-serif}
+  .glass{background:rgba(255,255,255,0.08);backdrop-filter:blur(16px) saturate(180%);border:1px solid rgba(255,255,255,0.15)}
+  pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+  /* Long-form copy is translated by swapping textContent on [data-fr]/[data-en].
+     Applied before first paint by an inline script in <head>, so the page never
+     flashes the wrong language. */
+  [data-fr],[data-en]{display:none}
+  html[data-lang="fr"] [data-fr],html[data-lang="en"] [data-en]{display:revert}
+</style>
+<script>
+  // Set the language before anything renders. Without JS both sets stay hidden,
+  // so the <noscript> block below supplies a French fallback.
+  (function(){
+    try{
+      var saved = localStorage.getItem('landing_lang');
+      var lang = saved || (navigator.language||'fr').toLowerCase().indexOf('fr')===0 ? 'fr' : 'en';
+      if(!saved) lang = (navigator.language||'fr').toLowerCase().startsWith('fr') ? 'fr' : 'en';
+      document.documentElement.setAttribute('data-lang', lang);
+    }catch(e){ document.documentElement.setAttribute('data-lang','fr'); }
+  })();
+</script>
+</head>
+
+<body class="bg-[#0a0a0f] text-white min-h-screen">
+<div class="absolute inset-0 bg-gradient-to-br from-violet-900/30 via-transparent to-cyan-900/20 pointer-events-none"></div>
+
+<header class="relative z-10 max-w-4xl mx-auto px-6 pt-8 pb-4 flex justify-between items-center gap-4 flex-wrap">
+  <div class="text-lg md:text-xl font-bold tracking-tight">
+    AI<span class="text-violet-400">Animation</span> Pipeline
+  </div>
+  <div class="flex gap-1 p-1 rounded-xl glass" role="group" aria-label="Language">
+    <button id="btn-fr" class="px-3 py-1.5 rounded-lg text-sm font-semibold transition">FR</button>
+    <button id="btn-en" class="px-3 py-1.5 rounded-lg text-sm font-semibold transition">EN</button>
+  </div>
+</header>
+
+<main class="relative z-10 max-w-4xl mx-auto px-6 pb-20">
+
+  <!-- Hero -->
+  <section class="pt-8 pb-10">
+    <h1 class="text-3xl md:text-5xl font-bold leading-tight">
+      <span data-fr>De l'audio au <span class="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-cyan-400">cartoon 3D animé</span></span>
+      <span data-en>Audio to <span class="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-cyan-400">animated 3D cartoon</span></span>
+    </h1>
+    <p class="text-white/60 mt-4 text-base md:text-lg" data-fr>
+      Reconnaissance vocale avec détection des interlocuteurs, visèmes synchronisés
+      sur les mots réellement prononcés, mise en scène 3D, et export vidéo.
+    </p>
+    <p class="text-white/60 mt-4 text-base md:text-lg" data-en>
+      Speech recognition with speaker diarization, visemes synced to the words
+      actually spoken, a 3D stage, and video export.
+    </p>
+  </section>
+
+  <!-- Why it is not hosted here -->
+  <section class="glass rounded-2xl p-6 md:p-8 mb-8">
+    <div class="inline-flex items-center gap-2 px-2.5 py-1 rounded-full bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[11px] font-semibold tracking-wide mb-4">
+      <span data-fr>POURQUOI CE SITE N'EST QU'UNE PAGE D'INFORMATION</span>
+      <span data-en>WHY THIS IS ONLY AN INFORMATION PAGE</span>
+    </div>
+
+    <h2 class="text-2xl font-bold mb-3" data-fr>L'hébergement gratuit ne peut pas exécuter ce projet</h2>
+    <h2 class="text-2xl font-bold mb-3" data-en>The free tier cannot run this project</h2>
+
+    <p class="text-white/70 leading-relaxed mb-5" data-fr>
+      Ce n'est pas une limite de l'application mais une question de taille. Les
+      modèles de reconnaissance vocale pèsent à eux seuls <strong class="text-white">879 Mo</strong>,
+      et une transcription complète atteint un pic d'environ
+      <strong class="text-white">1,76 Go</strong> en mémoire.
+    </p>
+    <p class="text-white/70 leading-relaxed mb-5" data-en>
+      This is not a limitation of the application but one of size. The speech
+      recognition models alone weigh <strong class="text-white">879 MB</strong>, and a
+      full transcription peaks at roughly <strong class="text-white">1.76 GB</strong> of memory.
+    </p>
+
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm border-collapse">
+        <thead>
+          <tr class="text-white/50 text-left">
+            <th class="py-2 pr-4 font-semibold" data-fr>Offre</th>
+            <th class="py-2 pr-4 font-semibold" data-en>Plan</th>
+            <th class="py-2 pr-4 font-semibold" data-fr>Mémoire</th>
+            <th class="py-2 pr-4 font-semibold" data-en>Memory</th>
+            <th class="py-2 font-semibold" data-fr>Verdict</th>
+            <th class="py-2 font-semibold" data-en>Verdict</th>
+          </tr>
+        </thead>
+        <tbody class="align-top">
+          <tr class="border-t border-white/10">
+            <td class="py-3 pr-4">Render — Free</td>
+            <td class="py-3 pr-4">512 Mo</td>
+            <td class="py-3 pr-4 text-rose-300" data-fr>✗ les modèles seuls dépassent la RAM</td>
+            <td class="py-3 pr-4 text-rose-300" data-en>✗ the models alone exceed the RAM</td>
+          </tr>
+          <tr class="border-t border-white/10">
+            <td class="py-3 pr-4">Render — Starter — 7 $/mois<br><span class="text-white/40 text-xs" data-fr>par mois</span><span class="text-white/40 text-xs" data-en>per month</span></td>
+            <td class="py-3 pr-4">512 Mo</td>
+            <td class="py-3 pr-4 text-rose-300" data-fr>✗ toujours 512 Mo</td>
+            <td class="py-3 pr-4 text-rose-300" data-en>✗ still 512 MB</td>
+          </tr>
+          <tr class="border-t border-white/10">
+            <td class="py-3 pr-4">Render — Standard — 25 $/mois<br><span class="text-white/40 text-xs" data-fr>par mois</span><span class="text-white/40 text-xs" data-en>per month</span></td>
+            <td class="py-3 pr-4">2 Go</td>
+            <td class="py-3 pr-4 text-amber-300" data-fr>⚠ limite : le pic est à 1,76 Go</td>
+            <td class="py-3 pr-4 text-amber-300" data-en>⚠ limit: the peak is 1.76 GB</td>
+          </tr>
+          <tr class="border-t border-white/10">
+            <td class="py-3 pr-4">Render — Pro — 85 $/mois<br><span class="text-white/40 text-xs" data-fr>par mois</span><span class="text-white/40 text-xs" data-en>per month</span></td>
+            <td class="py-3 pr-4">4 Go</td>
+            <td class="py-3 pr-4 text-emerald-300" data-fr>✓ fonctionne, mais coûteux</td>
+            <td class="py-3 pr-4 text-emerald-300" data-en>✓ works, but costly</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p class="text-white/70 leading-relaxed mt-5" data-fr>
+      Le palier le moins cher qui <em>pourrait</em> fonctionner laisse presque
+      aucune marge. La voie prise en charge est donc
+      <strong class="text-white">Docker sur votre propre machine</strong>, où la
+      mémoire n'est pas plafonnée par un quota d'hébergement.
+    </p>
+    <p class="text-white/70 leading-relaxed mt-5" data-en>
+      The cheapest plan that <em>might</em> work leaves almost no headroom. The
+      supported path is therefore <strong class="text-white">Docker on your own
+      machine</strong>, where memory is not capped by a hosting quota.
+    </p>
+
+    <p class="text-white/40 text-xs mt-4" data-fr>
+      À noter : les Docker Spaces de Hugging Face exigent un compte depuis juillet
+      2026 — ce n'est pas une alternative gratuite.
+    </p>
+    <p class="text-white/40 text-xs mt-4" data-en>
+      Worth noting: Hugging Face Docker Spaces have required an account since
+      July 2026 — not a free alternative.
+    </p>
+  </section>
+
+  <!-- Button + reveal. <details> so it opens without JavaScript. -->
+  <section class="mb-8">
+    <details class="glass rounded-2xl p-6 md:p-8 group">
+      <summary class="cursor-pointer list-none flex items-center justify-between gap-4">
+        <span class="text-xl font-bold" data-fr>Comment l'exécuter en local</span>
+        <span class="text-xl font-bold" data-en>How to run it locally</span>
+        <span class="text-2xl text-violet-300 transition group-open:rotate-45 shrink-0">+</span>
+      </summary>
+
+      <div class="mt-6 space-y-8">
+
+        <!-- Docker -->
+        <div>
+          <h3 class="text-lg font-semibold mb-1" data-fr>Avec Docker (recommandé)</h3>
+          <h3 class="text-lg font-semibold mb-1" data-en>With Docker (recommended)</h3>
+          <p class="text-white/55 text-sm mb-3" data-fr>
+          Tout est contenu dans l'image. C'est la voie la plus fiable.
+          </p>
+          <p class="text-white/55 text-sm mb-3" data-en>
+          Everything is contained in the image. This is the most reliable route.
+          </p>
+          <ol class="space-y-3 text-sm">
+            <li>
+              <div class="text-white/70 mb-1" data-fr>Préparez le fichier de jetons :</div>
+              <div class="text-white/70 mb-1" data-en>Prepare the token file:</div>
+              <pre class="bg-black/50 rounded-lg px-3 py-2 overflow-x-auto border border-white/10">cp .env.example .env</pre>
+            </li>
+            <li>
+              <div class="text-white/70 mb-1" data-fr>Renseignez <code class="text-violet-300">HF_TOKEN</code> dans <code class="text-violet-300">.env</code> :</div>
+              <div class="text-white/70 mb-1" data-en>Fill in <code class="text-violet-300">HF_TOKEN</code> in <code class="text-violet-300">.env</code>:</div>
+            </li>
+            <li>
+              <div class="text-white/70 mb-1" data-fr>Démarrez :</div>
+              <div class="text-white/70 mb-1" data-en>Start it:</div>
+              <pre class="bg-black/50 rounded-lg px-3 py-2 overflow-x-auto border border-white/10">docker compose up -d</pre>
+            </li>
+            <li>
+              <div class="text-white/70 mb-1" data-fr>Suivez le démarrage (premier lancement : téléchargement des modèles) :</div>
+              <div class="text-white/70 mb-1" data-en>Follow startup (first run: models download):</div>
+              <pre class="bg-black/50 rounded-lg px-3 py-2 overflow-x-auto border border-white/10">docker compose logs -f</pre>
+            </li>
+          </ol>
+        </div>
+
+        <div class="border-t border-white/10"></div>
+
+        <!-- Without Docker -->
+        <div>
+          <h3 class="text-lg font-semibold mb-1" data-fr>Sans Docker</h3>
+          <h3 class="text-lg font-semibold mb-1" data-en>Without Docker</h3>
+          <p class="text-white/55 text-sm mb-3" data-fr>Prérequis : Python 3.10+ et FFmpeg.</p>
+          <p class="text-white/55 text-sm mb-3" data-en>Prerequisites: Python 3.10+ and FFmpeg.</p>
+          <pre class="bg-black/50 rounded-lg px-3 py-2 overflow-x-auto border border-white/10 text-sm">python -m pip install -r requirements.txt</pre>
+          <pre class="bg-black/50 rounded-lg px-3 py-2 mt-3 overflow-x-auto border border-white/10 text-sm">python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000</pre>
+        </div>
+
+        <div class="border-t border-white/10"></div>
+
+        <div>
+          <h3 class="text-lg font-semibold mb-2" data-fr>Ouvrez ensuite</h3>
+          <h3 class="text-lg font-semibold mb-2" data-en>Then open</h3>
+          <a href="http://127.0.0.1:8000/" class="inline-block bg-white text-black px-4 py-2 rounded-lg font-semibold text-sm hover:bg-violet-200 transition">http://127.0.0.1:8000/</a>
+          <p class="text-white/50 text-xs mt-3" data-fr>
+            Au premier lancement, environ 879 Mo de modèles sont téléchargés.
+            Prévoyez quelques Go d'espace disque et de la patience.
+          </p>
+          <p class="text-white/50 text-xs mt-3" data-en>
+            On first run, roughly 879 MB of models are downloaded. Allow a few GB
+            of disk space and some patience.
+          </p>
+        </div>
+
+      </div>
+    </details>
+  </section>
+
+  <!-- Email -->
+  <section class="glass rounded-2xl p-6 md:p-8">
+    <h2 class="text-2xl font-bold mb-3" data-fr>Besoin du fichier Docker ?</h2>
+    <h2 class="text-2xl font-bold mb-3" data-en>Need the Docker file?</h2>
+    <p class="text-white/70 leading-relaxed mb-5" data-fr>
+      Écrivez-moi et je vous l'envoie, avec les instructions de démarrage.
+    </p>
+    <p class="text-white/70 leading-relaxed mb-5" data-en>
+      Email me and I will send it over, with the startup instructions.
+    </p>
+    <div class="flex flex-wrap items-center gap-3">
+      <a id="mail-link"
+         href="mailto:med.amine.mzk@gmail.com?subject=Docker%20file%20request%20%E2%80%94%20AI%20Animation%20Pipeline"
+         class="px-4 py-2.5 bg-violet-500 hover:bg-violet-400 text-white rounded-lg font-semibold text-sm transition">med.amine.mzk@gmail.com</a>
+      <button id="copy-mail" class="px-3 py-2.5 glass rounded-lg text-sm hover:bg-white/10 transition" data-fr>Copier l'adresse</button>
+      <button id="copy-mail-en" class="px-3 py-2.5 glass rounded-lg text-sm hover:bg-white/10 transition" data-en>Copy address</button>
+    </div>
+    <p id="copy-done" class="text-emerald-300 text-xs mt-3 hidden" data-fr>Adresse copiée.</p>
+    <p id="copy-done-en" class="text-emerald-300 text-xs mt-3 hidden" data-en>Address copied.</p>
+  </section>
+
+  <footer class="mt-12 pt-6 border-t border-white/10 text-white/40 text-sm">
+    <p data-fr>AI Animation Pipeline — page d'information. Le projet s'exécute en local.</p>
+    <p data-en>AI Animation Pipeline — information page. The project runs locally.</p>
+  </footer>
+</main>
+
+<noscript>
+  <div class="relative z-10 max-w-4xl mx-auto px-6 pb-10">
+    <div class="glass rounded-2xl p-6 text-sm">
+      <p class="font-semibold mb-2">Comment l'exécuter en local</p>
+      <p class="text-white/70 mb-3">Avec Docker — recommandé :</p>
+      <pre class="bg-black/50 rounded-lg px-3 py-2 overflow-x-auto border border-white/10">cp .env.example .env    # renseigner HF_TOKEN
+docker compose up -d
+docker compose logs -f</pre>
+      <p class="text-white/70 mt-3 mb-2">Sans Docker : Python 3.10+ et FFmpeg requis.</p>
+      <pre class="bg-black/50 rounded-lg px-3 py-2 overflow-x-auto border border-white/10">python -m pip install -r requirements.txt
+python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000</pre>
+      <p class="text-white/70 mt-3">Puis ouvrez http://127.0.0.1:8000/ — et écrivez-moi à
+        med.amine.mzk@gmail.com pour le fichier Docker.</p>
+    </div>
+  </div>
+</noscript>
+
+<script>
+  (function(){
+    var EMAIL = 'med.amine.mzk@gmail.com';
+    var root = document.documentElement;
+
+    function applyLang(lang){
+      root.setAttribute('data-lang', lang);
+      try { localStorage.setItem('landing_lang', lang); } catch(e){}
+      var fr = lang === 'fr';
+      var bf = document.getElementById('btn-fr'), be = document.getElementById('btn-en');
+      // Chosen language is filled; the other stays outlined.
+      bf.className = 'px-3 py-1.5 rounded-lg text-sm font-semibold transition ' + (fr ? 'bg-white text-black' : 'text-white/70 hover:text-white');
+      be.className = 'px-3 py-1.5 rounded-lg text-sm font-semibold transition ' + (fr ? 'text-white/70 hover:text-white' : 'bg-white text-black');
+      document.documentElement.lang = lang;
+      var ml = document.getElementById('mail-link');
+      ml.setAttribute('href', 'mailto:' + EMAIL + '?subject=' + encodeURIComponent(
+        fr ? 'Demande du fichier Docker — AI Animation Pipeline'
+           : 'Docker file request — AI Animation Pipeline'));
+    }
+
+    applyLang(root.getAttribute('data-lang') || 'fr');
+    document.getElementById('btn-fr').addEventListener('click', function(){ applyLang('fr'); });
+    document.getElementById('btn-en').addEventListener('click', function(){ applyLang('en'); });
+
+    function copy(){
+      var done = document.getElementById('copy-done'), doneEn = document.getElementById('copy-done-en');
+      var ok = function(){
+        done.classList.remove('hidden'); doneEn.classList.remove('hidden');
+        setTimeout(function(){ done.classList.add('hidden'); doneEn.classList.add('hidden'); }, 2000);
+      };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(EMAIL).then(ok, function(){ window.prompt(EMAIL); });
+      } else { window.prompt(EMAIL); }
+    }
+    document.getElementById('copy-mail').addEventListener('click', copy);
+    document.getElementById('copy-mail-en').addEventListener('click', copy);
+  })();
+</script>
+</body>
+</html>
