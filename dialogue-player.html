@@ -444,7 +444,22 @@
         cameraView: 'full', cameraDistance: 1.2, cameraY: 0.4, cameraRotateEnable: true, cameraZoomEnable: true, cameraPanEnable: true,
         lightAmbientIntensity: 6, lightDirectIntensity: 80, lightDirectPhi: 0.1, lightDirectTheta: 1.2, lightSpotIntensity: 20, avatarMood: 'neutral',
         update: (dt) => {
-          Object.values(state.avatars).forEach(av => { try{ av.animate(dt); }catch(e){} });
+          // Surface animation failures instead of discarding them. These used to
+          // be swallowed by an empty catch, which is how a TypeError thrown on
+          // every single frame -- o.limit is not a function -- stayed invisible
+          // while lip-sync silently did nothing and the audio carried on.
+          // Throttled to one line per avatar per 2s so a persistent fault stays
+          // readable instead of flooding the console.
+          Object.entries(state.avatars).forEach(([id, av]) => {
+            try { av.animate(dt); }
+            catch (err) {
+              const now = performance.now();
+              if (av._lastAnimateError === undefined || now - av._lastAnimateError > 2000) {
+                av._lastAnimateError = now;
+                console.error(`[animate failed] ${id}:`, err);
+              }
+            }
+          });
           // Listeners track whoever is speaking. updateGaze() is throttled
           // internally; updateGazeBodies() must run every frame so the camera
           // helpers cannot undo the body turn between ticks. Both are no-ops
@@ -1356,6 +1371,57 @@
       return h;
     }
 
+    // Shared camera fit. frameAvatars() and headCameraFor() both go through this,
+    // so a group shot and a speaker shot can never disagree about how far back the
+    // camera must be. They did: one computed 1.5 units from a head-spread and the
+    // other a flat 0.78 from the speaker, and the second put the lens inside the
+    // group.
+    //
+    // Two details that matter:
+    //
+    //  * All eight corners are projected with a +dz depth term. The camera sits in
+    //    front of the box, so a corner nearer the viewer than the centre is D-dz
+    //    away and its usable half-width is (D-dz)*halfH -- which means it needs
+    //    |dx|/halfH + dz. Without that term the near row is under-budgeted and
+    //    lands outside the frustum.
+    //  * camPos anchors to box.max.z, not center.z, so the camera is always beyond
+    //    the *nearest* character and can never end up inside the group.
+    //
+    // The minimum distance is derived from the box height rather than being a
+    // constant: at fov 42 a 0.73-tall character needs d >= 0.951, so the old
+    // hardcoded 0.9 floor guaranteed the legs fell out of shot.
+    function fitCameraForBox(box, cam) {
+      const center = box.getCenter(new THREE.Vector3());
+      const size = box.getSize(new THREE.Vector3());
+      const halfV = Math.tan((cam.fov * Math.PI / 180) / 2);
+      const halfH = halfV * (cam.aspect || 1.77);
+      let need = (size.y * 1.12) / (2 * halfV);
+      for (let i = 0; i < 8; i++) {
+        const px = (i & 1) ? box.max.x : box.min.x;
+        const py = (i & 2) ? box.max.y : box.min.y;
+        const pz = (i & 4) ? box.max.z : box.min.z;
+        const dz = pz - center.z;
+        need = Math.max(need, Math.abs(px - center.x) / halfH + dz, Math.abs(py - center.y) / halfV + dz);
+      }
+      const dist = Math.max(0.5, Math.min(need * 1.10, 40));
+      return { box, center, size, dist,
+               camPos: new THREE.Vector3(center.x, center.y + size.y * 0.08, box.max.z + dist) };
+    }
+
+    // Union box over whoever is actually on stage. Characters who have not arrived
+    // yet must not be included: an absent character standing at the door would
+    // otherwise inflate the fit and shrink everyone already present.
+    function stageBoxFor(onStageOnly) {
+      const box = new THREE.Box3();
+      try { if (state.mainHead && state.mainHead.scene) state.mainHead.scene.updateMatrixWorld(true); } catch(e){}
+      for (const [id, a] of Object.entries(state.avatars || {})) {
+        if (!a || !a.armature) continue;
+        if (onStageOnly && (a._stageVisible === false || a.armature.visible === false)) continue;
+        try { box.expandByObject(a.armature); } catch(e){}
+      }
+      return box;
+    }
+
     function frameAvatars(t, dur, opts) {
       let avatars = Object.values(state.avatars);
       const o = opts||{};
@@ -1394,45 +1460,41 @@
       try { if (state.mainHead && state.mainHead.scene) state.mainHead.scene.updateMatrixWorld(true); } catch(e){}
       avatars.forEach(a => { try { box.expandByObject(a.armature); } catch(e){} });
       if (box.isEmpty() || !isFinite(box.min.x)) return;
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-      const cam = state.mainHead.camera;
-      const vHalf = (cam.fov * Math.PI / 180) / 2;
-      // Fit every corner of the box, not just its lateral extent.
-      //
-      // Measuring only size.x and dividing by the field of view assumes every
-      // character sits at the centre's depth. The near row does not: standing
-      // ~0.5 units closer to the camera, the same lateral offset eats a larger
-      // share of the frustum, so a fit computed for the centre depth still
-      // crops the nearest characters -- which is exactly what the outer pair
-      // kept hitting. For a corner at offset (dx,dy) from the look-at point the
-      // needed distance is max(|dx|/tan(hHalf), |dy|/tan(vHalf)), so the
-      // required distance is the worst case over all eight corners.
-      const halfV = Math.tan(vHalf);
-      const halfH = halfV * (cam.aspect || 1.77);
-      let need = 0.9;
-      for (let i = 0; i < 8; i++) {
-        const px = (i & 1) ? box.max.x : box.min.x;
-        const py = (i & 2) ? box.max.y : box.min.y;
-        const pz = (i & 4) ? box.max.z : box.min.z;
-        // The camera sits at center.z + D, so a corner nearer the viewer than the
-        // centre is D-dz away, not D. Its usable half-width is therefore
-        // (D-dz)*halfH, which means it needs |dx|/halfH + dz -- the depth offset
-        // has to be added. Without that term the near row is silently
-        // under-budgeted and lands outside the frustum: measured at x 1.22..1.80
-        // (whole body right of frame) while the far row, same layout, fitted.
-        const dz = pz - center.z;
-        need = Math.max(need, Math.abs(px - center.x) / halfH + dz, Math.abs(py - center.y) / halfV + dz);
-      }
-      // Only a sanity ceiling -- there must be no fixed one, or any stage wider
-      // than the ceiling becomes impossible to frame.
-      const dist = Math.max(0.9, Math.min(need * 1.10, 40));
+      const fit = fitCameraForBox(box, state.mainHead.camera);
+      const center = fit.center, size = fit.size, dist = fit.dist, need = dist / 1.10;
       try {
-        // Sit slightly above centre and look at it, so feet and head are both
-        // inside rather than aiming at the middle of the heads.
-        const camPos = new THREE.Vector3(center.x, center.y + size.y * 0.08, center.z + dist);
+        const camPos = fit.camPos;
         const durUse = dur !== undefined ? dur : 550;
-        if(durUse===0) { state.mainHead.camera.position.copy(camPos); state.mainHead.camera.lookAt(center); if(state.mainHead.controls){ state.mainHead.controls.target.copy(center); state.mainHead.controls.update(); } }
+        // A direct framing call must also cancel any tween still in flight.
+        //
+        // The generation guard lives inside moveCameraTo, so a tween started
+        // earlier kept lerping the camera straight back over this one -- and with
+        // speaker changes scheduled at 2800ms, longer than most segments, that
+        // meant the camera spent most of playback being dragged to a stale shot
+        // while frameAvatars believed it had framed the stage. That is "camera is
+        // still, characters are gone": the camera was not still, it was being
+        // overwritten by a shot nobody asked for.
+        if(durUse===0) {
+          state.camTweenGen = (state.camTweenGen || 0) + 1;
+          state.camTween = null;
+          // Smooth mode keeps its own goal, which would otherwise keep easing the
+          // camera back toward the old framing.
+          if (state.isSmooth) {
+            if (!state.camGoal) state.camGoal = { pos: new THREE.Vector3(), look: new THREE.Vector3() };
+            state.camGoal.pos.copy(camPos);
+            state.camGoal.look.copy(center);
+            camSpring.look.copy(center);
+            camSpring.init = true;
+          }
+          state.mainHead.camera.position.copy(camPos);
+          state.mainHead.camera.lookAt(center);
+          state.mainHead.camera.updateMatrixWorld(true);
+          if(state.mainHead.controls){
+            state.mainHead.controls.target.copy(center);
+            state.mainHead.controls.enabled = !state.isPlaying;
+            state.mainHead.controls.update();
+          }
+        }
         else moveCameraTo(camPos, center, durUse, o);
         if(!state._lastLog || Date.now()-state._lastLog>2000) { state._lastLog=Date.now(); console.log(`[cam] frameAvatars box ${size.x.toFixed(2)}x${size.y.toFixed(2)}x${size.z.toFixed(2)} dist ${dist.toFixed(2)} need ${need.toFixed(2)} cast ${avatars.length}/${Object.keys(state.avatars).length} dur ${durUse}`); }
       } catch(e) { console.warn('frameAvatars failed', e); }
@@ -1914,8 +1976,28 @@
       // dividing put the camera CLOSER than the old fixed offset (0.71m vs
       // 0.79m) and cropped more of the body, not less.
       const fitDist = (charH / aimFull) / (2 * vHalf);
-      const minDist = 0.55 * s;
+      // Minimum distance derived from the character, not a constant. At fov 42 a
+      // 0.73-tall character needs d >= 0.951, so the old 0.55*s floor (0.22 at
+      // scale 0.4) framed head-and-shoulders and cut the body out of shot.
+      const minDist = (charH * 1.12) / (2 * vHalf);
       let soloDist = Math.max(minDist, Math.min(fitDist, 4.0));
+      // Frame the whole on-stage cast, not just the speaker.
+      //
+      // The camera used to sit at headPos.z + 0.78 -- a fixed offset from the
+      // speaker on the +Z side. With SPEAKER_00 at z=-0.60 and SPEAKER_01 at
+      // z=0.00 that puts the lens at z=0.18, so SPEAKER_01 is 0.18 units in front
+      // of it, where the horizontal half-width is only ~0.11 while she stands 0.6
+      // off-axis: roughly five times outside the frustum. Audible, present, and
+      // entirely out of shot. Nobody was hidden -- the camera was inside them.
+      //
+      // Widening to the cast makes that unreachable, and the look-at point is
+      // pulled toward the speaker so whoever is talking still reads as subject.
+      let stageFit = null;
+      try {
+        const box = stageBoxFor(true);
+        if (!box.isEmpty() && isFinite(box.min.x)) stageFit = fitCameraForBox(box, state.mainHead.camera);
+      } catch(e) {}
+      if (stageFit) soloDist = Math.max(soloDist, stageFit.dist);
       // A solo shot must never push another character who is already on stage out
       // of frame.
       //
@@ -1959,8 +2041,14 @@
       // Look at the middle of the character, not the top of its head, so a full
       // body actually sits in the middle of frame.
       const bodyMidY = headPos.y - (charH * 0.30);
-      const lookTarget = new THREE.Vector3(headPos.x, bodyMidY, headPos.z);
+      const lookTarget = stageFit
+        ? stageFit.center.clone().lerp(new THREE.Vector3(headPos.x, bodyMidY, headPos.z), 0.35)
+        : new THREE.Vector3(headPos.x, bodyMidY, headPos.z);
       const camPos = new THREE.Vector3(headPos.x, bodyMidY + (0.12*s), headPos.z + soloDist);
+      camPos.x += 0.12*s;
+      // Anchor the depth to the whole cast, so the lens always sits beyond the
+      // nearest character rather than a fixed offset in front of the speaker.
+      if (stageFit) camPos.z = stageFit.box.max.z + soloDist;
       camPos.x += 0.12*s;
       console.log(`[cam] target ${lookTarget.x.toFixed(2)},${lookTarget.y.toFixed(2)},${lookTarget.z.toFixed(2)} camPos ${camPos.x.toFixed(2)},${camPos.y.toFixed(2)},${camPos.z.toFixed(2)} soloDist ${soloDist.toFixed(2)} charH ${charH.toFixed(2)} dur ${dur||450}`);
       try {
@@ -2048,28 +2136,51 @@
                 }
               }
             }
-            // Rebuild mtAvatar for new visemes — must be ms:[Float32Array], is:[idx], with proper fields
+            // Rebuild mtAvatar for new visemes.
+            //
+            // These entries must have the same shape as the ones the engine builds
+            // in showAvatar() (talkinghead.mjs:1283). The engine guards them with
+            // `!== null`, so a *missing* field is undefined, passes the guard, and
+            // then gets called: `o.onchange(newvalue)` and `newvalue = o.limit(o.value)`
+            // both threw TypeError on every frame, once per aliased viseme per
+            // avatar. That is why lip-sync reported "viseme still 0 (peak 0.00)"
+            // and fell back to a jaw flap -- and why the exception was invisible,
+            // because the caller swallowed it.
+            //
+            // `limit` must be null or a function; it was the number 1.
             try {
+              const mtDef = (name, exceptions, fallback) =>
+                (exceptions && exceptions[name] !== undefined) ? exceptions[name] : fallback;
               for(const vis of Object.keys(visMap)) {
                 const vName = 'viseme_'+vis;
-                if(tryHead.mtAvatar[vName]) continue;
-                // Find which mesh now has vName after alias
-                let found = null;
-                for(const m of meshes) {
-                  if(m.morphTargetDictionary[vName]!==undefined) { found = m; break; }
-                }
-                if(found) {
-                  const idx = found.morphTargetDictionary[vName];
-                  // Clone template from an existing viseme entry if available, else create minimal
-                  const template = tryHead.mtAvatar['viseme_aa'] || tryHead.mtAvatar[Object.keys(tryHead.mtAvatar).find(k=>k.startsWith('viseme_'))] || {value:0, applied:0, baseline:0, newvalue:0, v:0, needsUpdate:false, easing:0.2, acc:0, limit:1};
-                  tryHead.mtAvatar[vName] = {
-                    ms: [found.morphTargetInfluences],
-                    is: [idx],
-                    value: 0, applied: 0, baseline: 0, newvalue: 0, v: 0, needsUpdate: false, easing: template.easing || 0.2, acc: 0, limit: 1
-                  };
-                }
+                if(tryHead.mtAvatar[vName]) continue;   // engine already made a valid one
+                // Every mesh carrying this viseme, not just the first: registering
+                // only one leaves the other meshes frozen mid-viseme.
+                const targets = meshes.filter(m => m.morphTargetDictionary && m.morphTargetDictionary[vName] !== undefined);
+                if(!targets.length) continue;
+                const baseline = (tryHead.avatar && tryHead.avatar.baseline && tryHead.avatar.baseline[vName] !== undefined)
+                  ? tryHead.avatar.baseline[vName]
+                  : ((tryHead.mtBaselineExceptions && tryHead.mtBaselineExceptions[vName] !== undefined)
+                      ? tryHead.mtBaselineExceptions[vName]
+                      : (tryHead.mtBaselineDefault || 0));
+                tryHead.mtAvatar[vName] = {
+                  fixed: null, realtime: null, system: null, systemd: null,
+                  newvalue: null, ref: null,
+                  min: mtDef(vName, tryHead.mtMinExceptions, tryHead.mtMinDefault || 0),
+                  max: mtDef(vName, tryHead.mtMaxExceptions, tryHead.mtMaxDefault === undefined ? 1 : tryHead.mtMaxDefault),
+                  easing: tryHead.mtEasingDefault, base: null,
+                  v: 0, needsUpdate: true,
+                  acc: (mtDef(vName, tryHead.mtAccExceptions, tryHead.mtAccDefault) || 0) / 10,
+                  maxv: (mtDef(vName, tryHead.mtMaxVExceptions, tryHead.mtMaxVDefault) || 0) / 10,
+                  limit: null, onchange: null,
+                  baseline, value: baseline, applied: baseline,
+                  ms: targets.map(m => m.morphTargetInfluences),
+                  is: targets.map(m => m.morphTargetDictionary[vName])
+                };
+                // Seed every registered influence to the baseline.
+                for(const m of targets) m.morphTargetInfluences[m.morphTargetDictionary[vName]] = baseline;
               }
-            } catch(e) { console.warn('mtAvatar rebuild failed', e); }
+            } catch(e) { console.error('mtAvatar rebuild failed', e); }
             if(aliased) console.log(`[lips] ${id} aliased ${aliased} visemes (aa->viseme_aa etc.)`);
             try {
               const visAfter = tryHead.morphs ? tryHead.morphs.filter(m=> m.morphTargetDictionary && Object.keys(m.morphTargetDictionary).some(k=>k.startsWith('viseme_'))).length : 0;
@@ -2399,11 +2510,11 @@
             if(sameAsLastCam) {
               // hold - don't move at all for same speaker
             } else if(!shouldSolo && partnerPresent) {
-              placeDialogueCam(seg.speaker, seg.start, 2800);
+              placeDialogueCam(seg.speaker, seg.start, seg._camDur);
               state._lastCamMove = nowMs;
               state._lastCamSpeaker = seg.speaker;
             } else if (!isMonologue || idx===0) {
-              headCameraFor(seg.speaker, 2800);
+              headCameraFor(seg.speaker, seg._camDur);
               state._lastCamMove = nowMs;
               state._lastCamSpeaker = seg.speaker;
             } else {
