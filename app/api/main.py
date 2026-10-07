@@ -1933,6 +1933,99 @@ async def anim_settings():
     return _no_store_html(str(ROOT / "animation-settings.html"))
 
 
+#: A frozen copy of the player from commit 968a03c, for side-by-side comparison
+#: while diagnosing characters vanishing during playback.
+#:
+#: It must be served from a root-level path, not from one of the StaticFiles
+#: mounts. The player fetches its dialogue with a *relative* URL
+#: (fetch(`jobs/${job}/dialogue.json`)), which resolves against the document's
+#: directory: served from /dialogue-player-legacy that becomes /jobs/... and works,
+#: but served from /tools/... it would become /tools/jobs/... and 404.
+LEGACY_PLAYER = ROOT / "tools" / "legacy" / "dialogue-player-968a03c.html"
+
+
+@app.get("/dialogue-player-legacy")
+async def player_legacy():
+    if not LEGACY_PLAYER.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "Legacy player build not found at tools/legacy/. Restore it with: "
+                "git show 968a03c:dialogue-player.html > tools/legacy/dialogue-player-968a03c.html"
+            ),
+        )
+    return _no_store_html(str(LEGACY_PLAYER))
+
+
+@app.get("/dialogue-player-legacy.html")
+async def player_legacy_html():
+    return await player_legacy()
+
+
+#: Frozen player builds for bisecting a regression, keyed by commit.
+#:
+#: Characters vanishing during playback turned out to be reproducible in the
+#: current player but not in 968a03c, so the culprit is one of the commits
+#: between them. Each is served as-is with only an identity banner added, so a
+#: behavioural difference between two of them is a real difference.
+#:
+#: The revision is matched against this dict and the filename is *built from the
+#: matched key* -- never from the request. Interpolating a path parameter into a
+#: filename would let "../" walk out of tools/legacy, so the allowlist is the
+#: security boundary here, not a convenience.
+BISECT_PLAYERS: dict[str, str] = {
+    "968a03c": "dialogue-player-968a03c.html",
+    "3025dae": "dialogue-player-3025dae.html",
+    "031b7c7": "dialogue-player-031b7c7.html",
+    "e52966b": "dialogue-player-e52966b.html",
+}
+
+BISECT_LEGACY_DIR = ROOT / "tools" / "legacy"
+
+
+def _serve_frozen_player(filename: str, rev: str) -> FileResponse:
+    """Serve a frozen player build by a hardcoded filename.
+
+    Deliberately a *flat* URL with no path segment. The player loads its modules
+    and its GLB avatars with document-relative URLs, and GLTFLoader resolves
+    those independently of <base href>, so serving it from /dialogue-player-at/3025dae
+    silently 404'd three.module.js, talkinghead.mjs and all four avatar GLBs --
+    and the avatars fell back to placeholders without any visible error. A flat
+    path such as /player-3025dae reproduces the URL shape of the known-good
+    /dialogue-player-legacy route exactly.
+    """
+    path = BISECT_LEGACY_DIR / filename
+    if not path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"{filename} is missing. Restore it with: "
+                f"git show {rev}:dialogue-player.html > tools/legacy/{filename}"
+            ),
+        )
+    return _no_store_html(str(path))
+
+
+@app.get("/player-968a03c", include_in_schema=False)
+async def player_968a03c():
+    return _serve_frozen_player("dialogue-player-968a03c.html", "968a03c")
+
+
+@app.get("/player-3025dae", include_in_schema=False)
+async def player_3025dae():
+    return _serve_frozen_player("dialogue-player-3025dae.html", "3025dae")
+
+
+@app.get("/player-031b7c7", include_in_schema=False)
+async def player_031b7c7():
+    return _serve_frozen_player("dialogue-player-031b7c7.html", "031b7c7")
+
+
+@app.get("/player-e52966b", include_in_schema=False)
+async def player_e52966b():
+    return _serve_frozen_player("dialogue-player-e52966b.html", "e52966b")
+
+
 # Static mounts. The directories are created first on purpose: jobs/, media/ and
 # assets/ are all gitignored, so on a fresh clone they are absent and StaticFiles
 # raises "Directory does not exist" *at import time* -- the server then refuses

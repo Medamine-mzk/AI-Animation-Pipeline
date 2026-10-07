@@ -1,0 +1,2268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<base href="/">
+<script>window.__playerBisect='3025dae';window.__playerLegacy=true;console.warn('[bisect] 3025dae -- gaze ON | old scattered visibility | old camera -- comparison only, NOT the current player');</script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>TalkingHead Dialogue Player</title>
+  <link rel="icon" href="data:,">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #111; color: #fff; font-family: system-ui, sans-serif; overflow: hidden; }
+    #scene-container { width: 100vw; height: 100vh; }
+    #ui-panel {
+      position: absolute; top: 16px; left: 16px;
+      background: rgba(0,0,0,0.35); backdrop-filter: blur(12px);
+      padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15);
+      /* Was width:760px -- a fixed overlay that covered ~40% of the stage it
+         was meant to frame. It is now sized to its contents and collapses to a
+         single button, so watching the dialogue does not mean staring past a
+         wall of controls. */
+      width: 340px; max-width: calc(100vw - 32px);
+      max-height: calc(100vh - 32px); overflow-y: auto; z-index: 10;
+      display: flex; flex-direction: column; gap: 12px;
+      transition: opacity 0.3s, transform 0.3s;
+    }
+    #ui-panel .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+    #ui-panel .group { display: flex; flex-direction: column; gap: 6px; }
+    #ui-panel .group-title {
+      font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
+      color: #64748b; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 4px;
+    }
+    #ui-panel .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    #ui-panel .hint { font-size: 10px; color: #94a3b8; line-height: 1.4; }
+    #ui-panel .check { display: flex; align-items: center; gap: 6px; margin: 0; }
+    #ui-panel #jobSource { color: #7dd3fc; }
+    #ui-panel #stageBoxSection { display: flex; flex-direction: column; gap: 4px; }
+    #ui-panel.hidden { opacity: 0; pointer-events: none; transform: translateX(-20px); }
+    #togglePanelBtn {
+      position: absolute; top: 16px; left: 16px; z-index: 11;
+      background: rgba(0,0,0,0.5); backdrop-filter: blur(8px);
+      color: #fff; border: 1px solid rgba(255,255,255,0.2); border-radius: 8px;
+      padding: 8px 12px; font-size: 12px; cursor: pointer;
+      display: none;
+    }
+    #togglePanelBtn.show { display: block; }
+    #ui-panel .full { display: flex; flex-direction: column; }
+    #ui-panel::-webkit-scrollbar { width: 6px; }
+    #ui-panel::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
+    #ui-panel h2 { font-size: 15px; color: #7dd3fc; }
+    #ui-panel label { display: block; font-size: 11px; color: #94a3b8; margin: 0; }
+    #ui-panel select {
+      width: 100%; padding: 6px; border-radius: 6px;
+      background: #222; color: #fff; border: 1px solid #444;
+    }
+    #ui-panel button {
+      width: 100%; margin-top: 0; padding: 9px;
+      background: #0ea5e9; color: #fff; border: none; border-radius: 6px;
+      font-weight: 600; cursor: pointer; transition: background 0.2s;
+    }
+    #ui-panel button:hover { background: #0284c7; }
+    #ui-panel button:disabled { background: #334155; cursor: not-allowed; }
+    /* The header's Hide button is a control, not a full-width action. */
+    #ui-panel .panel-head button {
+      width: auto; padding: 4px 10px; font-size: 11px; font-weight: 500;
+      background: rgba(255,255,255,0.15);
+    }
+    #ui-panel .panel-head button:hover { background: rgba(255,255,255,0.28); }
+    #ui-panel #drawBoxBtn { background: #22c55e; }
+    #ui-panel #drawBoxBtn:hover { background: #16a34a; }
+    #status { margin-top: 10px; font-size: 12px; color: #86efac; min-height: 18px; }
+    #subtitle-box {
+      position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.75); padding: 12px 24px; border-radius: 8px;
+      font-size: 18px; text-align: center; min-width: 300px; pointer-events: none;
+      transition: opacity 0.3s; opacity: 0;
+    }
+    #subtitle-box.active { opacity: 1; }
+    #speaker-label {
+      position: absolute; bottom: 80px; left: 50%; transform: translateX(-50%);
+      font-size: 12px; text-transform: uppercase; letter-spacing: 1px;
+      color: #7dd3fc; opacity: 0; transition: opacity 0.3s;
+    }
+    #speaker-label.active { opacity: 1; }
+    #icon-overlay { position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); pointer-events: none; opacity: 0; transition: opacity 0.2s; z-index: 5; }
+    #icon-overlay.active { opacity: 1; }
+    #icon-overlay .pill { background: rgba(0,0,0,0.5); border-radius: 18px; padding: 8px 14px; display: flex; align-items: center; gap: 10px; backdrop-filter: blur(4px); }
+    #icon-overlay img { height: 72px; width: auto; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4)); transition: transform 0.2s; }
+    #icon-overlay #mood-emoji { font-size: 28px; line-height: 1; }
+    .loading-overlay {
+      position: absolute; inset: 0; background: #000; z-index: 100;
+      display: flex; align-items: center; justify-content: center;
+      flex-direction: column; gap: 16px;
+    }
+    .loading-overlay.hidden { display: none; }
+    .spinner { width: 40px; height: 40px; border: 3px solid #333; border-top-color: #0ea5e9; border-radius: 50%; animation: spin 1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+  <script async src="https://unpkg.com/es-module-shims@1.8.0/dist/es-module-shims.js"></script>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "./assets/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/",
+      "talkinghead": "./assets/talkinghead.mjs"
+    }
+  }
+  </script>
+</head>
+<body>
+  <button id="togglePanelBtn" title="Show controls">Controls</button>
+  <div id="scene-container"></div>
+  <div class="loading-overlay" id="loading">
+    <div class="spinner"></div>
+    <div style="color:#888;font-size:14px;">Loading TalkingHead engine...</div>
+  </div>
+  <div id="ui-panel">
+    <div class="panel-head">
+      <h2 style="margin:0">Dialogue Player</h2>
+      <button id="hidePanelBtn" title="Hide panel">Hide</button>
+    </div>
+
+    <!-- Which job is playing. The audio and the dialogue both come from the job
+         on the server, so there is nothing to pick here. -->
+    <div id="jobSource" class="hint">Loading…</div>
+
+    <div class="group">
+      <div class="group-title">Playback</div>
+      <button id="playBtn" disabled>Play Dialogue</button>
+      <button id="stopBtn" disabled>Stop</button>
+      <div class="row2">
+        <button id="recordBtn" disabled style="background:#dc2626">● Record</button>
+        <button id="downloadBtn" disabled style="background:#059669">⬇ Video</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Look</div>
+      <label for="cameraMode">Camera</label>
+      <select id="cameraMode">
+        <option value="hybrid" selected>Hybrid — solo + two-shot</option>
+        <option value="solo">Solo — close-up per speaker</option>
+        <option value="wide">Wide — static group</option>
+      </select>
+      <label class="check" for="smoothToggle">
+        <input type="checkbox" id="smoothToggle"> Smooth camera
+      </label>
+    </div>
+
+    <div class="group">
+      <div class="group-title">Stage</div>
+      <!-- Was display:none, so the status bar demanded a step the panel would not
+           show. Drawing the box is optional; playback works without it. -->
+      <div id="stageBoxSection">
+        <button id="drawBoxBtn">⬜ Draw Stage Box</button>
+        <div class="hint">Click two corners on the floor — optional.</div>
+      </div>
+    </div>
+
+    <div class="full">
+      <div id="status">Loading…</div>
+      <div id="recordStatus" style="margin-top:4px;font-size:11px;color:#f87171;min-height:12px"></div>
+      <div class="hint" style="margin-top:6px">Zoom: wheel • Right-drag: pan • Drag avatar to move</div>
+    </div>
+
+    <!-- Kept in the DOM but hidden: applyBoxSpots() reads feetSink, and the
+         background controls are driven by picker_live, not by this panel. -->
+    <div style="display:none">
+      <select id="bgSelect"></select>
+      <input id="bgScale" type="range" min="0.5" max="2.0" step="0.05" value="1.0"><span id="bgScaleVal"></span><button id="bgReset"></button>
+      <input id="bgPosX" type="range" min="-5" max="5" step="0.1" value="0"><input id="bgPosY" type="range" min="-5" max="5" step="0.1" value="0"><input id="bgPosZ" type="range" min="-5" max="5" step="0.1" value="0"><span id="bgPosVal"></span>
+      <input id="charSize" type="range" min="0.05" max="0.5" step="0.01" value="0.40">
+      <span id="charSizeVal">0.40</span>
+      <input id="feetSink" type="range" min="-0.20" max="0.05" step="0.01" value="0.00">
+      <span id="feetSinkVal">0.00</span>
+      <div id="bgConfig"></div>
+    </div>
+    <!-- camHud is gone: a debug readout refreshed every 500ms with the camera
+         position and background scale, printed straight into the panel. -->
+  </div>
+  <div id="speaker-label"></div>
+  <div id="subtitle-box"></div>
+  <!-- Shown when a job's dialogue does not belong to its own audio. Silent until
+       proven otherwise, and never used to hide a problem: it names the two
+       numbers so the mismatch is diagnosable from the screen. -->
+  <div id="consistency-warning" hidden
+       style="position:fixed;left:50%;transform:translateX(-50%);top:12px;z-index:200;
+              max-width:min(90vw,640px);background:rgba(120,20,20,0.94);color:#fee2e2;
+              border:1px solid #ef4444;border-radius:10px;padding:10px 14px;font-size:13px;
+              line-height:1.45;box-shadow:0 8px 30px rgba(0,0,0,0.5)"></div>
+  <script>
+    // Defined before the module script so it is available to loadDiarization()
+    // as well as to the playback loop. Kept tiny and defensive: a diagnostic
+    // that throws would take the player down with it.
+    window.showConsistencyWarning = function (message) {
+      try {
+        var el = document.getElementById('consistency-warning');
+        if (!el) return;
+        if (!message) { el.hidden = true; return; }
+        el.innerHTML = '<strong>Dialogue / audio mismatch</strong><br>' + message;
+        el.hidden = false;
+      } catch (e) { /* a banner is never worth breaking playback over */ }
+    };
+  </script>
+  <div id="icon-overlay"><div class="pill"><img id="icon-img" src="" alt="" style="display:none"><span id="mood-emoji"></span></div></div>
+  <script type="module">
+    import * as THREE from 'three';
+    import { TalkingHead } from 'talkinghead';
+    import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+    import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+    import { DragControls } from 'three/addons/controls/DragControls.js';
+    const BG_LIST = ["assets/background/horsleygate_hall-4k_fitted.glb"];
+    const isSmooth = new URLSearchParams(location.search).get('smooth')==='1';
+    const state = { mainHead: null, avatars: {}, audioBuffer: null, diarization: null, icons: [], iconDict: {}, isPlaying: false, scheduledTimeouts: [], recorder: null, recordChunks: [], isRecording: false, recordAudioDest: null, recordedBlob: null, downloadUrl: null,
+      // Fixed now that their pickers are gone: lip-sync is always the hybrid
+      // auto path, and animation is always Full FBX (every job's segments carry a
+      // clip, verified across all of them).
+      lipsyncMode: 'auto', cameraMode: 'hybrid', animMode: 'fbx', mixers: {}, walkMixers: {}, clipCache: new Map(), bgGroup: null, lastBox: null, bgCurrent: null, camTween: null, isSmooth };
+    function easeInOutCubic(x){ return x<0.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2; }
+    // Smooth spring (when ?smooth=1) - single writer, live head tracking, no stacked tweens
+    const camSpring = { look: new THREE.Vector3(0, 1.6, 0), init: false };
+    function moveCameraTo(targetPos, targetLookAt, duration=550, opts={}){
+      if(!state.mainHead) return;
+      if(state.isSmooth){
+        const cam=state.mainHead.camera;
+        if(!opts.force && state.camGoal && cam.position.distanceTo(targetPos)<0.03 && camSpring.look.distanceTo(targetLookAt)<0.03) return;
+        if(!state.camGoal) state.camGoal={ pos:new THREE.Vector3(), look:new THREE.Vector3() };
+        state.camGoal.pos.copy(targetPos); state.camGoal.look.copy(targetLookAt);
+        if(!camSpring.init){ camSpring.look.copy(targetLookAt); camSpring.init=true; }
+        if(duration>0 && !state.isPlaying) state._camGlideUntil = performance.now() + 1200;
+        if(duration===0 || opts.force){
+          const ctrl=state.mainHead.controls;
+          cam.position.copy(targetPos); camSpring.look.copy(targetLookAt);
+          cam.lookAt(targetLookAt);
+          if(ctrl){ ctrl.target.copy(targetLookAt); if(!state.isPlaying) ctrl.update(); }
+        }
+        return;
+      }
+      const cam=state.mainHead.camera, ctrl=state.mainHead.controls;
+      const curTarget=ctrl ? ctrl.target.clone() : targetLookAt.clone();
+      if(!opts.force && cam.position.distanceTo(targetPos)<0.03 && curTarget.distanceTo(targetLookAt)<0.03) return;
+      state.camTween={fromPos:cam.position.clone(), toPos:targetPos.clone(), fromTarget:curTarget, toTarget:targetLookAt.clone(), start:performance.now(), dur:duration};
+      if(ctrl) ctrl.enabled=false;
+    }
+    function tickCameraTween(dtMs){
+      if(state.isSmooth){
+        if(!state.mainHead || !state.camGoal) return;
+        if(!state.isPlaying && !(state._camGlideUntil && performance.now() < state._camGlideUntil)) return;
+        const cam=state.mainHead.camera, ctrl=state.mainHead.controls;
+        const dt=Math.min(0.1, Math.max(0.001, (dtMs||16.7)/1000));
+        let goalLook=state.camGoal.look;
+        if(state.isPlaying && state._activeSpeaker && state.avatars[state._activeSpeaker]){
+          const av=state.avatars[state._activeSpeaker];
+          if(av.armature && av.armature.visible){
+            goalLook=getHeadWorldPos(av); goalLook.y+=0.04;
+          }
+        }
+        const k=1-Math.exp(-5.5*dt);
+        cam.position.lerp(state.camGoal.pos, k);
+        camSpring.look.lerp(goalLook, k);
+        cam.lookAt(camSpring.look);
+        if(ctrl) ctrl.target.copy(camSpring.look);
+        return;
+      }
+      const tw=state.camTween;
+      if(!tw || !state.mainHead) return;
+      const cam=state.mainHead.camera, ctrl=state.mainHead.controls;
+      const u=Math.min(1, (performance.now()-tw.start)/tw.dur);
+      const e=easeInOutCubic(u);
+      cam.position.lerpVectors(tw.fromPos, tw.toPos, e);
+      const look=new THREE.Vector3().lerpVectors(tw.fromTarget, tw.toTarget, e);
+      cam.lookAt(look);
+      if(ctrl) ctrl.target.copy(look);
+      if(u>=1){ state.camTween=null; if(ctrl){ ctrl.enabled=true; ctrl.update(); } }
+    }
+    const container = document.getElementById('scene-container');
+    const statusEl = document.getElementById('status');
+    const playBtn = document.getElementById('playBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const recordBtn = document.getElementById('recordBtn');
+    const downloadBtn = document.getElementById('downloadBtn');
+    const recordStatus = document.getElementById('recordStatus');
+    const subtitleBox = document.getElementById('subtitle-box');
+    const speakerLabel = document.getElementById('speaker-label');
+    const loading = document.getElementById('loading');
+    function sanitizeClipForAvatar(clip, avatar, keepHips=false) {
+      if(!clip || !avatar || !avatar.armature) return clip;
+      const boneSet = new Set();
+      avatar.armature.traverse(o=>{ if(o.isBone) boneSet.add(o.name); });
+      // Also add lowercased for case-insensitive fallback
+      const boneSetLower = new Set([...boneSet].map(n=> n.toLowerCase()));
+      const cloned = clip.clone();
+      const newTracks = [];
+      let dropped = 0, remapped = 0;
+      for(const track of cloned.tracks) {
+        const dotIdx = track.name.indexOf('.');
+        const bonePart = dotIdx>=0 ? track.name.slice(0, dotIdx) : track.name;
+        const prop = dotIdx>=0 ? track.name.slice(dotIdx) : '';
+        // Strip mixamorig prefix (handles mixamorig, mixamorig:, mixamorig5:, mixamorigHips)
+        let stripped = bonePart.split(':').pop();
+        stripped = stripped.replace(/^mixamorig\d*:?/i, '').replace(/^mixamorig_/i,'').replace(/^mixamorig/i,'');
+        stripped = stripped.replace(/^:/,'');
+        if(!stripped) continue;
+        // Find real bone name (case-sensitive first, then lower)
+        let real = null;
+        if(boneSet.has(stripped)) real = stripped;
+        else {
+          const lower = stripped.toLowerCase();
+          for(const b of boneSet) { if(b.toLowerCase()===lower) { real = b; break; } }
+        }
+        if(!real) { dropped++; continue; }
+        // Strip Hips position to avoid sliding — keep for walk clips
+        if(real==='Hips' && prop.includes('.position') && !keepHips) { dropped++; continue; }
+        track.name = real + prop;
+        newTracks.push(track);
+        if(bonePart !== real) remapped++;
+      }
+      cloned.tracks = newTracks;
+      if(remapped || dropped) console.log(`[fbx] ${clip.name} remapped ${remapped} dropped ${dropped} keepHips=${keepHips} for ${avatar.armature.name}`);
+      return cloned;
+    }
+     async function loadClip(url, avatar, keepHips=false) {
+      let raw = state.clipCache.get(url);
+      if(!raw) {
+        try {
+          const loader = new FBXLoader();
+          const obj = await loader.loadAsync(encodeURI(url));
+          raw = obj.animations[0];
+          if(!raw) return null;
+          state.clipCache.set(url, raw);
+        } catch(e) { console.warn('clip load failed', url, e.message); return null; }
+      }
+      // Clone and retarget per avatar so multiple skeletons can share cache
+      let clip = raw.clone();
+      if(avatar) {
+        try {
+          clip = sanitizeClipForAvatar(clip, avatar, keepHips || /Standard Walk/i.test(url));
+        } catch(e) { console.warn('sanitize failed', e.message); }
+      } else {
+        clip.tracks.forEach(t=> t.name = t.name.replace(/^mixamorig\d*:?/i,''));
+        if(!keepHips) clip.tracks = clip.tracks.filter(t=> !(t.name==='Hips.position'));
+      }
+      return clip;
+    }
+    async function initScene() {
+      // Icons helpers (dark pill + word+mood)
+      const iconOverlay = document.getElementById('icon-overlay');
+      const iconImg = document.getElementById('icon-img');
+      const moodEmoji = document.getElementById('mood-emoji');
+      function activeIcon(t){ if(!state.icons.length) return null; let best=null; for(const ev of state.icons){ if(t>=ev.start && t<=ev.end){ if(!best || (ev.end-ev.start)>(best.end-best.start)) best=ev; } } return best; }
+      function iconEnvelope(t, ev){ const POP=1.0, FADE=1.2; const HOLD=0.8; const endHold=ev.end+HOLD; if(t<ev.start||t>endHold) return {alpha:0,scale:0.3}; const d=endHold-ev.start; if(t-ev.start<POP){ const x=(t-ev.start)/POP; const s=1-Math.pow(1-x,3); return {alpha:x,scale:0.3+0.7*s}; } if(endHold-t<FADE){ const x=(endHold-t)/FADE; return {alpha:x,scale:0.9+0.1*x}; } return {alpha:1,scale:1}; }
+      function updateIcons(t){
+        const ev=activeIcon(t);
+        const seg=state.diarization?.segments?.find(s=> t>=s.start && t< s.end);
+        const moodRaw=seg?.go_label || seg?.mood || 'neutral';
+        const moodIcon = state.iconDict[moodRaw] || state.iconDict[moodRaw.toLowerCase()] || '';
+        moodEmoji.textContent = moodIcon ? moodIcon : (ev ? '' : '');
+        if(ev){
+          const word=ev.word.toLowerCase();
+          const hasPix = state.pixabayIndex && state.pixabayIndex[word] && !state.pixabayIndex[word].fallback && state.pixabayIndex[word]!==null;
+          // only load image if word has a real icon - Iconify SVG vs local PNG vs emoji
+          let iconForWord = null;
+          let isIconify = false;
+          if (state.icons) {
+            const found = state.icons.find(ic => ic.word && ic.word.toLowerCase()===word);
+            if (found) { iconForWord = found.icon; isIconify = !!found.isIconify || (found.icon && found.icon.includes(':')); }
+          }
+          if (!iconForWord && state.iconDict && state.iconDict[word]) iconForWord = state.iconDict[word];
+          // check if Iconify (contains :)
+          if (iconForWord && iconForWord.includes(':')) isIconify = true;
+          const isEmoji = iconForWord && !isIconify && iconForWord.length <= 4;
+          const isDefaultIcon = !iconForWord || iconForWord === "💬";
+          if (isDefaultIcon) {
+            // no icon or default - hide image, emoji fallback will show via moodEmoji if needed
+            iconImg.style.display='none';
+            iconImg.dataset.src='';
+            // show default emoji via moodEmoji if no activeIcon
+            if (!isIconify && iconForWord === "💬") {
+              moodEmoji.textContent = "💬";
+              iconOverlay.classList.add('active');
+              moodEmoji.style.opacity = '1';
+            }
+          } else if (isIconify) {
+            // Iconify SVG - fetch via api.iconify.design
+            let src = `https://api.iconify.design/${iconForWord}.svg?height=72`;
+            if(iconImg.dataset.src!==src){
+              iconImg.dataset.src=src;
+              iconImg.src=src;
+              iconImg.onerror=()=>{ iconImg.style.display='none'; iconImg.onerror=null; };
+            }
+            iconImg.style.display='';
+            iconImg.style.objectFit='contain';
+          } else if (isEmoji) {
+            // local emoji - show via moodEmoji, hide image
+            iconImg.style.display='none';
+            moodEmoji.textContent = iconForWord;
+            iconOverlay.classList.add('active');
+            moodEmoji.style.opacity='1';
+            iconImg.dataset.src='';
+          } else {
+            let src= hasPix ? `app/assets/pixabay/${word}.jpg` : `app/assets/icons/${word}.png`;
+            if(iconImg.dataset.src!==src){
+              iconImg.dataset.src=src;
+              iconImg.src=src;
+              iconImg.onerror=()=>{ iconImg.style.display='none'; iconImg.onerror=null; };
+            }
+            iconImg.style.display='';
+          }
+          iconImg.style.objectFit='cover'; iconImg.style.borderRadius='8px';
+          const env=iconEnvelope(t,ev);
+          iconOverlay.classList.add('active');
+          iconImg.style.opacity=env.alpha;
+          iconImg.style.transform=`scale(${env.scale})`;
+          iconOverlay.style.opacity=env.alpha;
+          moodEmoji.style.opacity=env.alpha;
+        } else if(moodIcon){
+          iconImg.style.display='none';
+          iconOverlay.classList.add('active');
+          iconOverlay.style.opacity=1;
+          moodEmoji.style.opacity=1;
+        } else {
+          iconOverlay.classList.remove('active');
+        }
+      }
+      state.mainHead = new TalkingHead(container, {
+        cameraView: 'full', cameraDistance: 1.2, cameraY: 0.4, cameraRotateEnable: true, cameraZoomEnable: true, cameraPanEnable: true,
+        lightAmbientIntensity: 6, lightDirectIntensity: 80, lightDirectPhi: 0.1, lightDirectTheta: 1.2, lightSpotIntensity: 20, avatarMood: 'neutral',
+        update: (dt) => {
+          Object.values(state.avatars).forEach(av => { try{ av.animate(dt); }catch(e){} });
+          // Listeners track whoever is speaking. updateGaze() is throttled
+          // internally; updateGazeBodies() must run every frame so the camera
+          // helpers cannot undo the body turn between ticks. Both are no-ops
+          // before playback and for single-speaker jobs.
+          // Date.now(), not dt: dt is a ~16ms delta and the throttle compares
+          // against a wall clock, so passing dt made every frame look throttled.
+          try { updateGaze(Date.now()); } catch(e){}
+          try { updateGazeBodies(); } catch(e){}
+          Object.values(state.mixers).forEach(m=> { try{ m.update(dt*0.001); }catch(e){} });
+          Object.values(state.walkMixers).forEach(m=> { try{ m.update(dt*0.001); }catch(e){} });
+          // Follow walker camera dolly + icons
+          try { if(state._walkFollow && state.isPlaying) updateWalkCamera(); } catch(e){}
+          try { if(state.isPlaying && state._playStart) updateIcons(Date.now()/1000 - state._playStart); } catch(e){}
+        }
+      });
+      // FIX: TalkingHead hardcodes a 10° FOV internally, meant to be paired with its
+      // own setView()/cameraDistance math. mainHead never calls showAvatar() (it's used
+      // purely as a rendering host for the per-speaker avatars), so setView() never runs
+      // and the camera is stuck at that very narrow 10° FOV. Our custom shot framing
+      // (headCameraFor/placeDialogueCam) assumes a normal-ish lens, so we widen it here.
+      state.mainHead.camera.fov = 42;
+      state.mainHead.camera.updateProjectionMatrix();
+      try { state.mainHead.renderer.toneMappingExposure = 1.8; state.mainHead.renderer.outputColorSpace = THREE.SRGBColorSpace; } catch(e){}
+      // Extra lights for brightness (characters close to black)
+      try {
+        const hemi=new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+        const dir=new THREE.DirectionalLight(0xffffff, 1.0); dir.position.set(5,8,4);
+        state.mainHead.scene.add(hemi); state.mainHead.scene.add(dir);
+      } catch(e){}
+      await state.mainHead.start();
+      state.mainHead.isRunning = true;
+      let _last = performance.now();
+      const _hostLoop = (t) => {
+        state.mainHead._raf = requestAnimationFrame(_hostLoop);
+        const dt = t - _last; if(dt < 1000/30) return; _last = t;
+        const dts = dt / (state.mainHead.animSlowdownRate || 1);
+        state.mainHead.animClock = (state.mainHead.animClock || 0) + dts;
+        if(state.mainHead.opt && state.mainHead.opt.update) state.mainHead.opt.update(dts);
+        tickCameraTween(dt);
+        if(state.isSmooth){
+          // smooth spring owns camera during play, controls only when not playing
+          if(!state.isPlaying){
+            try { state.mainHead.controls?.update(); } catch(e){}
+          }
+        } else {
+          try { state.mainHead.controls?.update(); } catch(e){}
+        }
+        try { state.mainHead.render(); } catch(e){}
+      };
+      _hostLoop(performance.now());
+      // Background group (all 13) + live edit reuse mainHead.controls (best: orbit livesave)
+      state.bgGroup = new THREE.Group(); state.mainHead.scene.add(state.bgGroup);
+      const bgSelect = document.getElementById('bgSelect');
+      
+      BG_LIST.forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p.split('/').pop(); bgSelect.appendChild(o); });
+      function updateBackgroundBounds(){
+        state.bgGroup.updateWorldMatrix(true,true);
+        state.lastBox=new THREE.Box3().setFromObject(state.bgGroup);
+      }
+      function applyBgUniformScale(s){
+        state.bgGroup.scale.set(s,s,s);
+        updateBackgroundBounds();
+        saveSpotsLive(false);
+      }
+      async function loadBackground(url){
+        try { state.bgGroup.clear(); } catch(e){}
+        try {
+          const loader=new GLTFLoader();
+          const gltf=await loader.loadAsync(url);
+          const g=gltf.scene;
+          g.traverse(o=>{ if(o.isMesh){ o.castShadow=false; o.receiveShadow=false; } });
+          state.bgGroup.add(g);
+          // Apply saved uniform scale if any
+          try { const saved=JSON.parse(localStorage.getItem('picker_live')); if(saved?.bgTransform?.scale) state.bgGroup.scale.set(saved.bgTransform.scale,saved.bgTransform.scale,saved.bgTransform.scale); } catch(e){}
+          const box=new THREE.Box3().setFromObject(state.bgGroup);
+          state.lastBox=box.clone();
+          state.bgCurrent=url;
+        } catch(e){ console.warn('bg load fail', url, e.message); }
+      }
+      // Ignore background 91M — don't load GLB, use green base
+      try {
+        bgSelect.style.display='none'; bgSelect.parentElement.querySelector('label').textContent='Background — Default Grid (ignored)';
+        state.lastBox=new THREE.Box3(new THREE.Vector3(-20,0,-20), new THREE.Vector3(20,0.02,20));
+        state.bgCurrent=null;
+      } catch(e){}
+      bgSelect.addEventListener('change', async (e)=>{ await loadBackground(e.target.value); await loadOccupancy(e.target.value); await reflowSpotsForBG(); if(Object.keys(state.avatars).length){ Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x,0,p.z); }); frameAvatars(0,0,{force:true}); } saveSpotsLive(false); });
+      // The 500ms camera HUD interval is gone with the readout it filled.
+      let _saveTimer=null;
+      function getCurrentJobId(){
+        try {
+          const u=new URLSearchParams(location.search).get('job');
+          if (u) return u;
+          const w=localStorage.getItem('wav_job_id');
+          if (w) return w;
+        } catch(e){}
+        return 'default';
+      }
+      function saveSpotsLive(doPost=false){
+        clearTimeout(_saveTimer);
+        _saveTimer=setTimeout(()=>{
+          try {
+            const spots=Object.entries(state.avatars).filter(([id])=> state.diarization?.speakers?.[id]).map(([id,av])=> ({id, role: state.diarization?.speakers?.[id]?.name||id, x:+av.armature.position.x.toFixed(3), y:+av.armature.position.y.toFixed(3), z:+av.armature.position.z.toFixed(3), yaw: ((av.armature.rotation.y*180/Math.PI+90)%360).toFixed(1) }));
+            const payload={background: state.bgCurrent, bgTransform:{scale: +state.bgGroup.scale.x.toFixed(3), position: state.bgGroup.position.toArray()}, spots, camera:{position: state.mainHead.camera.position.clone(), target: state.mainHead.controls.target.clone()}, fov: state.mainHead.camera.fov };
+            const jid=getCurrentJobId();
+            localStorage.setItem('picker_live_' + jid, JSON.stringify(payload));
+            // keep global for backward compat but per-job is source of truth
+            localStorage.setItem('picker_live', JSON.stringify(payload));
+          } catch(e){}
+        }, 400);
+      }
+      // BG uniform scale + Char size (very small) sliders
+      const bgScale=document.getElementById('bgScale'), bgScaleVal=document.getElementById('bgScaleVal');
+      bgScale.addEventListener('input', (e)=>{ const s=parseFloat(e.target.value); bgScaleVal.textContent=s.toFixed(2); applyBgUniformScale(s); });
+      document.getElementById('bgReset').addEventListener('click', ()=>{ bgScale.value=1.0; bgScaleVal.textContent='1.00'; bgPosX.value=0; bgPosY.value=0; bgPosZ.value=0; bgPosVal.textContent='0,0,0'; state.bgGroup.position.set(0,0,0); applyBgUniformScale(1.0); });
+      const charSize=document.getElementById('charSize'), charSizeVal=document.getElementById('charSizeVal');
+      function applyCharSize(s){
+        charSizeVal.textContent=s.toFixed(2);
+        Object.values(state.avatars).forEach(av=>{ if(av.armature) av.armature.scale.setScalar(s); });
+        saveSpotsLive(false);
+      }
+      charSize.addEventListener('input', (e)=>{ applyCharSize(parseFloat(e.target.value)); });
+      state._applyCharSize=applyCharSize;
+      const feetSink=document.getElementById('feetSink'), feetSinkVal=document.getElementById('feetSinkVal');
+      function applyFeetSink(s){
+        feetSinkVal.textContent=s.toFixed(2);
+        const gg=window.getGroundY||getGroundY;
+        Object.values(state.avatars).forEach(av=>{ if(av.armature){ let gy=0; try{ gy=gg(av.armature.position.x, av.armature.position.z); }catch(e){} av.armature.position.y=gy+s; if(av._slotPos) av._slotPos.y=gy+s; }});
+        Object.keys(state.diarization?.speakers||{}).forEach(id=>{ if(state.diarization.speakers[id]){ const p=state.diarization.speakers[id]; let gy=0; try{ gy=gg(p.x,p.z); }catch(e){} p.y=+(gy+s).toFixed(3); }});
+        saveSpotsLive(false); frameAvatars(0,0,{force:true});
+      }
+      feetSink.addEventListener('input', (e)=>{ applyFeetSink(parseFloat(e.target.value)); });
+      // BG Pos sliders (manual manipulation as requested)
+      const bgPosX=document.getElementById('bgPosX'), bgPosY=document.getElementById('bgPosY'), bgPosZ=document.getElementById('bgPosZ'), bgPosVal=document.getElementById('bgPosVal');
+      function applyBgPos(){
+        const x=parseFloat(bgPosX.value), y=parseFloat(bgPosY.value), z=parseFloat(bgPosZ.value);
+        state.bgGroup.position.set(x,y,z);
+        state.bgGroup.updateWorldMatrix(true,true);
+        state.lastBox=new THREE.Box3().setFromObject(state.bgGroup);
+        bgPosVal.textContent=`${x.toFixed(1)},${y.toFixed(1)},${z.toFixed(1)}`;
+        saveSpotsLive(false);
+      }
+      bgPosX.addEventListener('input', applyBgPos);
+      bgPosY.addEventListener('input', applyBgPos);
+      bgPosZ.addEventListener('input', applyBgPos);
+      // Drag avatars to move spots (live) — reuse mainHead.controls, furniture AABB via lastBox + occupancy fallback
+      let dragControls=null;
+      let occupancy=null; // lazy load per BG
+      const ROOM_LABEL_MAP={ "horsleygate_hall-4k_fitted":"horsleygate","horsleygate_hall-4k":"horsleygate","horsleygate_hall-1k":"horsleygate","saloon-1k":"saloon1k","saloon-2k":"saloon2k","garage with cars":"garage","living_room_with_curtains":"big_room","living_room_with_curtains_fitted":"big_room","interior_4_living_room__kitchen":"living_kitchen","interior_15_mini_loft":"mini_loft","loft2_free_interior":"loft2","test-background":"big_room","big_room":"big_room","bedroom":"bedroom","dining_room":"dining_room","kitchen":"kitchen" };
+      async function loadOccupancy(bgUrl){
+        try {
+          let label=bgUrl.split('/').pop().replace('.glb','');
+          label=ROOM_LABEL_MAP[label] || label;
+          const jr=await fetch(`jobs/rooms/${label}/room_report.json`);
+          if(jr.ok){ const j=await jr.json(); occupancy=j; }
+          else { occupancy=null; }
+        } catch(e){ occupancy=null; }
+      }
+      function getGroundY(x,z){ return 0; }
+      window.getGroundY=getGroundY; state.getGroundY=getGroundY;
+      function isNearFurniture(x,z, r=0.35){ return false;
+        let blocked=false;
+        state.bgGroup.traverse(o=>{
+          if(!o.isMesh || blocked) return;
+          o.updateWorldMatrix(true,false);
+          const box=new THREE.Box3().setFromObject(o);
+          const w=box.max.x-box.min.x, d=box.max.z-box.min.z, h=box.max.y-box.min.y;
+          const area=w*d;
+          if(state.lastBox){
+            const roomW=state.lastBox.max.x-state.lastBox.min.x, roomD=state.lastBox.max.z-state.lastBox.min.z;
+            const roomArea=roomW*roomD;
+            if(area>0.6*roomArea && h>1.0) return;
+          }
+          if(box.max.y < 0.15 || box.min.y > 1.85) return;
+          if(x+r > box.min.x && x-r < box.max.x && z+r > box.min.z && z-r < box.max.z) blocked=true;
+        });
+        return blocked;
+      }
+      state.isNearFurniture=isNearFurniture; state.getGroundY=getGroundY;
+      // Stage Box: 4 angles = 4 spots (user must select box)
+      state.stageBox=null; state.stageBoxHelper=null; state.stagePlane=null; state.boxDrawMode=false;
+      function updateStageBoxHelper(){
+        if(state.stageBoxHelper) try{ state.mainHead.scene.remove(state.stageBoxHelper); }catch(e){}
+        if(state.stagePlane) try{ state.mainHead.scene.remove(state.stagePlane); }catch(e){}
+        if(!state.stageBox) return;
+        state.stageBoxHelper=new THREE.Box3Helper(state.stageBox, 0x22c55e);
+        state.stageBoxHelper.material.depthTest=false; state.stageBoxHelper.material.transparent=true; state.stageBoxHelper.material.opacity=0.9; state.stageBoxHelper.renderOrder=999;
+        state.mainHead.scene.add(state.stageBoxHelper);
+        const w=state.stageBox.max.x-state.stageBox.min.x, d=state.stageBox.max.z-state.stageBox.min.z;
+        const cx=(state.stageBox.min.x+state.stageBox.max.x)/2, cz=(state.stageBox.min.z+state.stageBox.max.z)/2;
+        state.stagePlane=new THREE.Mesh(new THREE.PlaneGeometry(Math.max(w,0.3),Math.max(d,0.3)), new THREE.MeshBasicMaterial({color:0x22c55e, transparent:true, opacity:0.25, side:THREE.DoubleSide, depthWrite:false}));
+        state.stagePlane.rotation.x=-Math.PI/2; state.stagePlane.position.set(cx,0.025,cz); state.stagePlane.renderOrder=998; state.mainHead.scene.add(state.stagePlane);
+      }
+      function applyBoxSpots(){
+        if(!state.stageBox || !state.diarization) return;
+        const ids=Object.keys(state.diarization.speakers);
+        const b=state.stageBox;
+        const eps=0.06;
+        const corners=[ {x:b.min.x+eps, z:b.min.z+eps}, {x:b.max.x-eps, z:b.min.z+eps}, {x:b.max.x-eps, z:b.max.z-eps}, {x:b.min.x+eps, z:b.max.z-eps} ];
+        const sink=parseFloat(document.getElementById('feetSink')?.value||0.05);
+        const gg=window.getGroundY||getGroundY;
+        ids.forEach((sid,idx)=>{
+          const c=corners[idx % 4];
+          let x=c.x, z=c.z;
+          let gy=0; try{ gy=gg(x,z); }catch(e){}
+          state.diarization.speakers[sid].position.x=+x.toFixed(3);
+          state.diarization.speakers[sid].position.z=+z.toFixed(3);
+          state.diarization.speakers[sid].position.y=+(gy+sink).toFixed(3);
+        });
+        Object.entries(state.avatars).forEach(([id,av])=>{
+          const p=state.diarization.speakers[id]?.position;
+          if(p && av.armature){ av.armature.position.set(p.x, p.y, p.z); av.armature.updateMatrixWorld(true); }
+        });
+        frameAvatars(0,0,{force:true}); saveSpotsLive(false);
+      }
+      async function reflowSpotsForBG(){
+        if(!state.diarization || !state.lastBox) return;
+        if(state.stageBox){ applyBoxSpots(); return; }
+        const speakers=state.diarization.speakers; const ids=Object.keys(speakers);
+        const b=state.lastBox, eps=0.45;
+        const candidates=[];
+        for(let x=b.min.x+eps; x<=b.max.x-eps; x+=0.5) for(let z=b.min.z+eps; z<=b.max.z-eps; z+=0.5){
+          if(!isNearFurniture(x,z,0.30)) candidates.push({x,z});
+        }
+        if(!candidates.length) return;
+        const N=ids.length;
+        const roomW=b.max.x-b.min.x;
+        const rHall=Math.min(roomW/4, 1.6);
+        const r=Math.max(rHall, 1.2);
+        let best=null, bestScore=-1;
+        for(const c of candidates){
+          let ok=true; let pts=[];
+          ids.forEach((_,idx)=>{ const ang=2*Math.PI*idx/N - Math.PI/2; const x=c.x+r*Math.cos(ang), z=c.z+r*Math.sin(ang); pts.push({x,z}); if(isNearFurniture(x,z,0.30) || x<b.min.x+eps||x>b.max.x-eps||z<b.min.z+eps||z>b.max.z-eps) ok=false; });
+          if(!ok) continue;
+          // Score: sum distance to walls + inter 1.2
+          let score= -Math.hypot(c.x,c.z)*0.05;
+          if(score>bestScore){ bestScore=score; best={center:c, pts}; }
+        }
+        if(best){
+          ids.forEach((sid,idx)=>{ speakers[sid].position.x=+best.pts[idx].x.toFixed(3); speakers[sid].position.z=+best.pts[idx].z.toFixed(3); });
+        }
+      }
+      function setupDrag(){
+        try {
+          const objs=Object.values(state.avatars).map(a=>a.armature).filter(Boolean);
+          if(!objs.length) return;
+          if(dragControls) try{ dragControls.dispose(); }catch(e){}
+          dragControls=new DragControls(objs, state.mainHead.camera, state.mainHead.renderer.domElement);
+          dragControls.addEventListener('dragstart', (e)=>{ if(state.mainHead.controls) state.mainHead.controls.enabled=false; e.object.userData._origPos=e.object.position.clone(); });
+          dragControls.addEventListener('drag', (e)=>{
+            const sink=parseFloat(document.getElementById('feetSink')?.value||0.05);
+            let x=e.object.position.x, z=e.object.position.z;
+            let gy=0; try{ gy=(window.getGroundY||getGroundY)(x,z); }catch(e){}
+            e.object.position.y=gy+sink;
+            // AABB wall clamp
+            if(state.lastBox){
+              const eps=0.35; const b=state.lastBox;
+              x=Math.max(b.min.x+eps, Math.min(b.max.x-eps, x));
+              z=Math.max(b.min.z+eps, Math.min(b.max.z-eps, z));
+              e.object.position.x=x; e.object.position.z=z;
+            }
+            const near=isNearFurniture(x,z);
+            e.object.traverse(o=>{ if(o.isMesh && o.material && o.material.emissive){ o.material.emissive.set(near ? 0x330000 : 0x000000); }});
+            // Plain word, not U+26A0 U+FE0F: the emoji variation selector asks for an
+    // emoji font that `font-family: system-ui` does not provide, so the warning
+    // rendered as an empty box -- an error sign that could not be read.
+    if(near) statusEl.textContent='Warning: near furniture - move to clear floor';
+          });
+          dragControls.addEventListener('dragend', (e)=>{
+            if(state.mainHead.controls) state.mainHead.controls.enabled=true;
+            e.object.traverse(o=>{ if(o.isMesh && o.material && o.material.emissive) try{ o.material.emissive.set(0x000000); }catch(e){}});
+            if(isNearFurniture(e.object.position.x, e.object.position.z)){
+              if(e.object.userData._origPos) e.object.position.copy(e.object.userData._origPos);
+              statusEl.textContent='Blocked by furniture — reverted';
+            } else { saveSpotsLive(false); frameAvatars(); }
+          });
+        } catch(e){ console.warn('drag setup fail', e.message); }
+      }
+      // Draw Box must be selected — 4 angles = 4 spots (box before avatars)
+      document.getElementById('drawBoxBtn').addEventListener('click', ()=>{
+        console.log('[box] Draw Stage Box clicked, entering draw mode');
+        state.boxDrawMode=true; boxStart=null; statusEl.textContent='Draw Stage Box: drag on floor (green) — 4 corners become 4 spots';
+        if(state.mainHead.controls) state.mainHead.controls.enabled=false;
+        try{ if(dragControls) dragControls.enabled=false; }catch(e){}
+        state.mainHead.renderer.domElement.style.cursor='crosshair';
+        state.mainHead.renderer.domElement.style.outline='2px solid #22c55e';
+        console.log('[box] boxDrawMode=true, lastBox', state.lastBox, 'bgGroup children', state.bgGroup.children.length);
+      });
+      const raycasterBg=new THREE.Raycaster(), mouseBg=new THREE.Vector2(), planeBg=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+      let boxStart=null;
+      function getHit(ev){
+        const rect=state.mainHead.renderer.domElement.getBoundingClientRect();
+        mouseBg.x=((ev.clientX-rect.left)/rect.width)*2-1; mouseBg.y=-((ev.clientY-rect.top)/rect.height)*2+1;
+        raycasterBg.setFromCamera(mouseBg, state.mainHead.camera);
+        const hit=new THREE.Vector3(); const ok=raycasterBg.ray.intersectPlane(planeBg, hit);
+        console.log('[box] getHit', ev.type, 'mouse', mouseBg.x.toFixed(2), mouseBg.y.toFixed(2), 'hit', hit.x.toFixed(2), hit.z.toFixed(2), 'ok', !!ok, 'cam', state.mainHead.camera.position.x.toFixed(1), state.mainHead.camera.position.z.toFixed(1));
+        return hit;
+      }
+      state.mainHead.renderer.domElement.addEventListener('pointerdown', (ev)=>{
+        console.log('[box] pointerdown', 'boxDrawMode', state.boxDrawMode, 'button', ev.button);
+        if(!state.boxDrawMode) return;
+        ev.preventDefault(); ev.stopPropagation();
+        try{ state.mainHead.renderer.domElement.setPointerCapture(ev.pointerId); }catch(e){}
+        const hit=getHit(ev);
+        if(!boxStart){
+          boxStart=hit.clone();
+          console.log('[box] corner1', boxStart.x.toFixed(2), boxStart.z.toFixed(2));
+          if(state.stageBoxHelper) try{ state.mainHead.scene.remove(state.stageBoxHelper); }catch(e){}
+          if(state.stagePlane) try{ state.mainHead.scene.remove(state.stagePlane); }catch(e){}
+          statusEl.textContent='Corner 1 set — click second corner (or drag)';
+          return;
+        } else {
+          // Second click — finalize box from boxStart to hit
+          const minX=Math.min(boxStart.x, hit.x), maxX=Math.max(boxStart.x, hit.x), minZ=Math.min(boxStart.z, hit.z), maxZ=Math.max(boxStart.z, hit.z);
+          const area=(maxX-minX)*(maxZ-minZ);
+          console.log('[box] corner2', hit.x.toFixed(2), hit.z.toFixed(2), 'box', minX.toFixed(2), maxX.toFixed(2), minZ.toFixed(2), maxZ.toFixed(2), 'area', area.toFixed(2));
+          if(area>=0.05){
+            state.stageBox=new THREE.Box3(new THREE.Vector3(minX,0,minZ), new THREE.Vector3(maxX,0.02,maxZ));
+            updateStageBoxHelper(); applyBoxSpots();
+            statusEl.textContent='Stage Box set — 4 corners are 4 spots';
+            // Load avatars after box if needed
+            (async()=>{
+              if(!Object.keys(state.avatars).length && state.diarization?.speakers){
+                try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=true; if(state._setupDrag) state._setupDrag(); const s=parseFloat(document.getElementById('charSize')?.value||0.5); Object.values(state.avatars).forEach(av=> av.armature && av.armature.scale.setScalar(s)); frameAvatars(0,0,{force:true}); } catch(e){}
+              } else { Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x, p.y, p.z); const s2=parseFloat(document.getElementById('charSize')?.value||0.5); if(av.armature) av.armature.scale.setScalar(s2); }); frameAvatars(0,0,{force:true}); }
+              state._boxReady=true; const cb=document.getElementById('confirmSpotsBtn'); cb.disabled=false; cb.style.opacity=1;
+            })();
+          } else { statusEl.textContent='Box too small — pick larger corners'; }
+          state.boxDrawMode=false; boxStart=null; if(state.mainHead.controls) state.mainHead.controls.enabled=true;
+          try{ if(dragControls) dragControls.enabled=true; }catch(e){}
+          state.mainHead.renderer.domElement.style.cursor=''; state.mainHead.renderer.domElement.style.outline='';
+          return;
+        }
+      });
+      state.mainHead.renderer.domElement.addEventListener('pointermove', (ev)=>{
+        if(!state.boxDrawMode || !boxStart) return;
+        const hit=getHit(ev);
+        const minX=Math.min(boxStart.x, hit.x), maxX=Math.max(boxStart.x, hit.x), minZ=Math.min(boxStart.z, hit.z), maxZ=Math.max(boxStart.z, hit.z);
+        const area=(maxX-minX)*(maxZ-minZ);
+        state.stageBox=new THREE.Box3(new THREE.Vector3(minX,0,minZ), new THREE.Vector3(maxX,0.02,maxZ));
+        updateStageBoxHelper();
+        const small=(area<0.05);
+        if(state.stageBoxHelper) state.stageBoxHelper.material.color.set(small?0xff4444:0x22c55e);
+      });
+      state.mainHead.renderer.domElement.addEventListener('pointerup', async (ev)=>{
+        if(!state.boxDrawMode || !boxStart) return;
+        const hit=getHit(ev);
+        const minX=Math.min(boxStart.x, hit.x), maxX=Math.max(boxStart.x, hit.x), minZ=Math.min(boxStart.z, hit.z), maxZ=Math.max(boxStart.z, hit.z);
+        const area=(maxX-minX)*(maxZ-minZ);
+        if(area>=0.05){
+          console.log('[box] pointerup drag final box', minX.toFixed(2), maxX.toFixed(2), minZ.toFixed(2), maxZ.toFixed(2), 'area', area.toFixed(2));
+          state.stageBox=new THREE.Box3(new THREE.Vector3(minX,0,minZ), new THREE.Vector3(maxX,0.02,maxZ));
+          updateStageBoxHelper(); applyBoxSpots();
+          statusEl.textContent='Stage Box set — 4 corners are 4 spots';
+          if(!Object.keys(state.avatars).length && state.diarization?.speakers){
+            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=true; if(state._setupDrag) state._setupDrag(); const s=parseFloat(document.getElementById('charSize')?.value||0.5); Object.values(state.avatars).forEach(av=> av.armature && av.armature.scale.setScalar(s)); frameAvatars(0,0,{force:true}); } catch(e){}
+          } else { Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x, p.y, p.z); const s2=parseFloat(document.getElementById('charSize')?.value||0.5); if(av.armature) av.armature.scale.setScalar(s2); }); frameAvatars(0,0,{force:true}); }
+          state._boxReady=true; const cb=document.getElementById('confirmSpotsBtn'); cb.disabled=false; cb.style.opacity=1;
+          state.boxDrawMode=false; boxStart=null; if(state.mainHead.controls) state.mainHead.controls.enabled=true;
+          try{ if(dragControls) dragControls.enabled=true; }catch(e){}
+          state.mainHead.renderer.domElement.style.cursor=''; state.mainHead.renderer.domElement.style.outline='';
+        } else {
+          console.log('[box] pointerup keep corner1 area', area.toFixed(2));
+          statusEl.textContent='Corner 1 set — click second corner';
+          // Keep boxStart and boxDrawMode for second click
+        }
+      });
+      // Ghost manual +Add palette (kept but box corners now primary)
+      // Legacy ghost palette disabled — box corners are primary (4 angles = 4 spots)
+      // (ghost +Add kept disabled; box draw is primary)
+      const raycasterGhost=new THREE.Raycaster(); const mouseGhost=new THREE.Vector2(); const planeGhost=new THREE.Plane(new THREE.Vector3(0,1,0),0);
+      let pendingPos=null, pendingRole=null, ghostGroup=null, pendingYaw=0;
+      const ROLES=['girl','woman','man','boy'];
+      const addPalette=document.getElementById('addPalette');
+      // (No +Add beyond box corners; palette hidden)
+      // (ghost +Add disabled)
+      state._setupDrag=setupDrag;
+      // The Save Spots button is gone: saveSpotsLive() already re-persists every
+      // position to localStorage about every 400ms, so dragging an avatar is
+      // saved continuously. What the button added was a manual JSON download.
+      try { state.mainHead.scene.background = new THREE.Color(0x87ceeb); } catch(e){}
+      try { state.mainHead.renderer.setClearColor(0x87ceeb, 1); } catch(e){}
+      try { state.mainHead.scene.fog = new THREE.Fog(0x87ceeb, 8, 20); } catch(e){}
+      state.bgGroup.visible=false;
+      try {
+        const greenBase=new THREE.Mesh(new THREE.PlaneGeometry(6,6), new THREE.MeshBasicMaterial({color:0x22c55e, side:THREE.DoubleSide}));
+        greenBase.rotation.x=-Math.PI/2; greenBase.position.y=0; greenBase.receiveShadow=false; greenBase.name='greenBase';
+        state.mainHead.scene.add(greenBase);
+        const grid=new THREE.GridHelper(6,6,0x1a5c2a,0x2a7a3a);
+        grid.position.y=0.01; state.mainHead.scene.add(grid);
+        state.lastBox=new THREE.Box3(new THREE.Vector3(-3,0,-3), new THREE.Vector3(3,0.02,3));
+      } catch(e){}
+      loading.classList.add('hidden');
+      statusEl.textContent = 'Scene ready.';
+      // Defer avatar load until after user gesture to avoid AudioContext autoplay block (4x warnings)
+      // Auto-load dialogue JSON only, not avatars — avatars will load on first Play click
+      state.prePlayEditing=true;
+      // Ask the server whether this job's dialogue belongs to its own audio. Four
+      // jobs here carry a dialogue written for a longer recording, and until this
+      // existed the only symptom was hearing your own audio under somebody else's
+      // words. The server measures the real WAV duration, so this cannot drift.
+      async function checkJobConsistency(jobId) {
+        try {
+          const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}?t=${Date.now()}`,
+                               { cache: 'no-store' });
+          if (!r.ok) return;
+          const c = (await r.json()).consistency;
+          if (c && c.ok === false) {
+            window.showConsistencyWarning(
+              c.reason + ' Playback will stop when the audio ends.');
+            console.warn('[consistency]', c);
+          }
+        } catch (e) { /* never block playback on a diagnostic */ }
+      }
+
+      function mergePickerLive(){
+        try {
+          const jid=getCurrentJobId();
+          let saved=null;
+          try {
+            const perJob = localStorage.getItem('picker_live_' + jid);
+            if (perJob) saved=JSON.parse(perJob);
+            // do NOT fallback to global picker_live for new jobs - it has stale 4-speaker layout from London
+            // only use global if this is the same job that created it (check if saved job id matches)
+          } catch(e){}
+          if(!saved || !saved.spots || !state.diarization) return;
+          // Only update positions for speakers that exist in this job's dialogue - never add extra speakers
+          const validIds = new Set(Object.keys(state.diarization.speakers));
+          // if saved has different count than current, ignore (stale layout)
+          if (saved.spots.length !== validIds.size) {
+            console.log('[merge] picker_live spot count '+saved.spots.length+' != speakers '+validIds.size+' - ignoring stale layout');
+            return;
+          }
+          saved.spots.forEach(s=>{
+            if (!validIds.has(s.id)) return;
+            const existing = state.diarization.speakers[s.id];
+            if(existing){
+              if (!existing.position) existing.position = {x: s.x, y: s.y, z: s.z};
+              else {
+                existing.position.x=s.x;
+                existing.position.y=s.y;
+                existing.position.z=s.z;
+              }
+              if(s.yaw) existing.rotation=(parseFloat(s.yaw)-90)*Math.PI/180;
+            }
+          });
+          if(saved.background) state.diarization.background=saved.background;
+          if(saved.bgTransform){
+            state.diarization.bgTransform=saved.bgTransform;
+            if(state.bgGroup && saved.bgTransform.scale) state.bgGroup.scale.setScalar(saved.bgTransform.scale);
+            if(saved.bgTransform.position) state.bgGroup.position.fromArray(saved.bgTransform.position);
+          }
+          // Don't restore sky camera (y>2.35) — hybrid will frame correctly
+          if(saved.camera && state.mainHead && saved.camera.position && saved.camera.position.y < 2.3){
+            try{ state.mainHead.camera.position.copy(saved.camera.position); state.mainHead.controls.target.copy(saved.camera.target); if(saved.fov) state.mainHead.camera.fov=saved.fov; state.mainHead.camera.updateProjectionMatrix(); }catch(e){}
+          }
+          console.log('[merge] picker_live 1.119 merged, bg', saved.background, 'scale', saved.bgTransform?.scale);
+        } catch(e){ console.warn('[merge] fail', e); }
+      }
+      window.mergePickerLive=mergePickerLive; state.mergePickerLive=mergePickerLive;
+      try {
+        const urlJob=(new URLSearchParams(location.search)).get('job');
+        const wavJob=localStorage.getItem('wav_job_id');
+        const bust = Date.now();
+        // priority: explicit ?job= -> wav_job_id -> dialogue_override (manual) -> default
+        // Use cache bust + no-store so avatar selected in config.html is used on hard refresh
+          if (urlJob) {
+            try { const r=await fetch(`jobs/${urlJob}/dialogue.json?t=${bust}`, {cache:'no-store'}); if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${urlJob}/dialogue.json via ?job= with ${Object.keys(state.diarization.speakers||{}).length} speakers`); } } catch(e){}
+            await checkJobConsistency(urlJob);
+          }
+          if (!state.diarization && wavJob) {
+            try { const r=await fetch(`jobs/${wavJob}/dialogue.json?t=${bust}`, {cache:'no-store'}); if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${wavJob}/dialogue.json via wav_job_id`); } } catch(e){}
+            await checkJobConsistency(wavJob);
+          }
+        if (!state.diarization) {
+          const over=localStorage.getItem('dialogue_override');
+          if(over){ try{ state.diarization=JSON.parse(over); console.log('[config] loaded dialogue_override from config page'); }catch(e){} }
+        }
+        if(!state.diarization){
+          const fallbackId=urlJob || wavJob || 'default';
+          const r=await fetch(`jobs/${fallbackId}/dialogue.json?t=${bust}`, {cache:'no-store'});
+          if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${fallbackId}/dialogue.json fallback`); }
+          else { const r2=await fetch(`jobs/dialogue.json?t=${bust}`, {cache:'no-store'}); if(r2.ok){ state.diarization=await r2.json(); console.log('[job] loaded jobs/dialogue.json ultimate fallback'); } }
+        }
+        if(!state.diarization){
+          const tried = urlJob || wavJob || 'default';
+          console.warn('[job] no dialogue found for '+tried);
+          statusEl.textContent = 'No dialogue found for job ' + tried + ' — it may have been deleted. Go to Dialogue Config → My Projects and Open a project, or re-upload audio. Then click → Player again.';
+          statusEl.style.color='#f87171';
+        } else {
+          mergePickerLive();
+        }
+        if (state.diarization) try {
+          // Keep fixed 1.119 spots — don't overwrite if picker_live exists
+          if(localStorage.getItem('picker_live')){ /* keep merged 1.119 */ }
+          else {
+          const speakers=state.diarization.speakers;
+          const ids=Object.keys(speakers);
+          let need=false;
+          for(let i=0;i<ids.length;i++) for(let j=i+1;j<ids.length;j++){
+            const a=speakers[ids[i]].position, b=speakers[ids[j]].position;
+            if(Math.hypot(a.x-b.x, a.z-b.z)<1.1) need=true;
+            if(isNearFurniture(a.x,a.z)) need=true;
+            if(isNearFurniture(b.x,b.z)) need=true;
+          }
+          if(need){
+            const N=ids.length, target=0.84; const r=Math.min(Math.max(target/(2*Math.sin(Math.PI/N)),0.60),1.2);
+            let cx=0,cz=0; // room center
+            if(state.lastBox){ cx=(state.lastBox.min.x+state.lastBox.max.x)/2*0.2; cz=(state.lastBox.min.z+state.lastBox.max.z)/2*0.2; }
+            for(let tries=0; tries<20; tries++){
+              let ok=true;
+              ids.forEach((sid,idx)=>{
+                const ang=2*Math.PI*idx/ids.length - Math.PI/2;
+                let x=cx+r*Math.cos(ang), z=cz+r*Math.sin(ang);
+                // push until clear of furniture (allow walk under high)
+                for(let k=0;k<5;k++){ if(isNearFurniture(x,z)){ x+=0.2*Math.cos(ang); z+=0.2*Math.sin(ang); } else break; }
+                if(isNearFurniture(x,z)) ok=false;
+                speakers[sid].position.x=+x.toFixed(3); speakers[sid].position.z=+z.toFixed(3);
+              });
+              if(ok) break;
+            }
+          }
+          } // end else keep 1.119
+        } catch(e){}
+        // Counted, never hardcoded to 4: this block also runs for the default dialogue.
+        const _n = Object.keys(state.diarization.speakers).length;
+        statusEl.textContent=`Auto-loaded dialogue.json (${_n} speaker${_n===1?'':'s'}) — loading avatars`; checkReady();
+        setTimeout(async ()=>{
+          if(!Object.keys(state.avatars).length && state.diarization?.speakers){
+            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=false; try { applyPresentVisibility(0); frameAvatars(0,0,{force:true}); if(state._setupDrag) state._setupDrag(); } catch(e){} checkReady(); const _m = Object.keys(state.avatars).length; const _ready = !playBtn.disabled; if(_ready) statusEl.textContent=`${_m} avatar${_m===1?'':'s'} ready — Play enabled`; } catch(e){}
+          }
+        }, 600);
+      } catch(e) {}
+      let _pendingAudioArrayBuffer=null;
+      try {
+        const urlJob=new URLSearchParams(location.search).get('job');
+        const jobId=urlJob || localStorage.getItem('wav_job_id') || 'default';
+// With no ?job=, `localStorage.getItem('wav_job_id')` may name a job that no
+  // longer exists, and the old code silently fell through to a raw file path
+  // that also 404s -- leaving a visitor with no audio and no explanation. Fall
+  // back to the served default dialogue's own audio instead.
+  const ar = await fetch(`jobs/${jobId}/audio.wav?t=${Date.now()}`, {cache:'no-store'});
+  if(ar.ok){
+    _pendingAudioArrayBuffer = await ar.arrayBuffer();
+    statusEl.textContent=`Auto-fetched audio ${(_pendingAudioArrayBuffer.byteLength/1e6).toFixed(1)}MB — Play ready`
+    checkReady();
+  } else {
+// The served default dialogue carries no audio field, so there is nothing to
+    // pair it with. Record that, because the avatar-ready message is written
+    // 600ms later and would otherwise claim "Play enabled" while Play stays
+    // disabled -- a status line contradicting the button beside it.
+    try { localStorage.removeItem('wav_job_id'); } catch(e) {}
+    state._noAudio = true;
+    checkReady();
+  }
+      } catch(e) { console.warn('auto audio fetch failed', e); }
+      state._pendingAudioArrayBuffer=_pendingAudioArrayBuffer;
+      state._boxReady=true;
+      // "Confirm Spots" is created hidden and only revealed while drawing a stage box.
+      // It was appended straight to #ui-panel, which is why it appeared as a
+      // stray full-width button at the bottom of the controls; it now lives in
+      // the Stage group beside Draw Stage Box.
+      const confirmBtn=document.createElement('button'); confirmBtn.id='confirmSpotsBtn'; confirmBtn.textContent='✓ Confirm Spots → Play'; confirmBtn.style.cssText='display:none;margin-top:4px';
+      (document.getElementById('stageBoxSection') || document.getElementById('ui-panel')).appendChild(confirmBtn);
+       // Auto-load icons per-job (not golden) - each job has specific icons
+        try {
+          const jid = getCurrentJobId();
+          let ir = null;
+          // try per-job first - bust cache so newly generated icons after avatar change show
+          try { ir = await fetch(`jobs/${jid}/icons.json?t=${Date.now()}`, {cache:'no-store'}); } catch(e){}
+          if(ir && ir.ok){
+            state.icons = await ir.json(); console.log(`icons loaded ${state.icons.length} for job ${jid}`);
+          } else {
+            // for non-golden jobs, don't reuse London icons - generate from transcript or empty
+            // try golden only if this is actually a golden/default job
+            if (jid === 'golden' || jid === 'default') {
+              let gr = await fetch(`jobs/golden/icons.json?t=${Date.now()}`, {cache:'no-store'});
+              if(!gr.ok) gr = await fetch(`jobs/icons.json?t=${Date.now()}`, {cache:'no-store'});
+              if(gr && gr.ok){ state.icons = await gr.json(); console.log(`icons loaded ${state.icons.length} golden fallback`); }
+              else { state.icons = []; console.log('no icons for job '+jid+' - empty'); }
+            } else {
+              // generate minimal icons from transcript words using dictionary if available
+              state.icons = [];
+              console.log('no per-job icons for '+jid+' - using empty (will show no London icons)');
+            }
+          }
+          const dr = await fetch(`tools/icons/dictionary.json?t=${Date.now()}`, {cache:'no-store'});
+          if(dr.ok) state.iconDict = await dr.json();
+          state.pixabayIndex = {};
+       } catch(e) { console.warn('icons load failed', e); state.icons=[]; }
+    }
+      // Cache keyed on the diarization object itself: it is replaced wholesale on
+      // every load, so identity is a safe invalidation signal, and this runs
+      // inside the camera frame loop.
+      let _firstLineCache = { key: null, map: new Map() };
+      function firstLineMap() {
+        const d = state.diarization;
+        if (_firstLineCache.key === d) return _firstLineCache.map;
+        const map = new Map();
+        for (const s of (d?.segments || [])) {
+          const sid = s?.speaker, t = s?.start;
+          if (sid == null || typeof t !== 'number') continue;
+          const cur = map.get(sid);
+          if (cur === undefined || t < cur) map.set(sid, t);
+        }
+        _firstLineCache = { key: d, map };
+        return map;
+      }
+      function isPresent(sid, t) {
+        if(state.prePlayEditing) return true;
+        const order = state.diarization?.entranceOrder || [];
+        const walkins = state.diarization?.walkins || [];
+        // The entrance schedule is DERIVED data; the dialogue is the source of
+        // truth. It used to be trusted absolutely (`t >= walkin.t0`), so a stale
+        // schedule silently removed a character from the stage: job ce2f201a
+        // kept 2-speaker entrances after becoming a 4-speaker job, which left
+        // the mom's walk-in at 30.07s while her first line was at 8.64s -- she
+        // was invisible through her own dialogue and only appeared once the dad
+        // started talking at 32s. A speaker must therefore be on stage no later
+        // than their own first line, whatever the schedule claims.
+        const firstLine = firstLineMap().get(sid);
+        let t0;
+        if (order.length && order[0] === sid) {
+          t0 = 0;                                  // first on stage, already there
+        } else {
+          const wk = walkins.find(w => w.speaker === sid);
+          if (wk) t0 = wk.t0;
+          else if (firstLine !== undefined) t0 = firstLine;  // no entrance: appear on their first line
+          else return true;                        // nothing says otherwise
+        }
+        if (firstLine !== undefined && t0 > firstLine) t0 = firstLine;
+        return t >= t0 - 1e-6;
+      }
+      // Read-only introspection, so "is this character on stage?" can be checked
+      // in a real browser instead of inferred from the JSON. Returns exactly what
+      // applyPresentVisibility() would use; it changes nothing.
+      window.dialoguePresenceAt = function(t){
+        const out = {};
+        for (const id of Object.keys(state.avatars || {})) out[id] = isPresent(id, t);
+        return out;
+      };
+      // The fixed animation/lip-sync settings, so "always Full FBX" and "always
+      // auto" can be asserted rather than assumed.
+      window.dialogueModes = function(){
+        return { animMode: state.animMode, lipsyncMode: state.lipsyncMode || 'auto',
+                 cameraMode: state.cameraMode, smooth: !!state.isSmooth };
+      };
+      // Measured gaze state, so "everyone looks at the speaker" can be checked
+      // instead of inferred. needYaw is the world yaw from a character's head to
+      // the speaker's head; facingYaw is where its body actually points. Both
+      // are world-space, because the body may sit under a rotated parent.
+      window.dialogueGaze = function(t){
+        const spk = activeSpeakerAt(t);
+        const spkHead = spk && state.avatars[spk] ? getHeadWorldPos(state.avatars[spk]) : null;
+        const rows = Object.entries(state.avatars).map(([id, av]) => {
+          const head = getHeadWorldPos(av);
+          const tgt = av.speakTo;
+          const hasTarget = !!(tgt && typeof tgt.x === 'number');
+          const targetAtHeadHeight = hasTarget ? tgt.y > 0.25 : null;
+          let needYaw = null, facingYaw = null, offByDeg = null, facesSpeaker = null;
+          if (spkHead && id !== spk) {
+            needYaw = +(Math.atan2(spkHead.x - head.x, spkHead.z - head.z) * 180 / Math.PI).toFixed(1);
+            try {
+              const d = new THREE.Vector3();
+              av.armature.getWorldDirection(d);
+              facingYaw = +(Math.atan2(d.x, d.z) * 180 / Math.PI).toFixed(1);
+            } catch(e){}
+            if (facingYaw !== null) {
+              let diff = Math.abs(needYaw - facingYaw) % 360;
+              if (diff > 180) diff = 360 - diff;
+              offByDeg = +diff.toFixed(1);
+              facesSpeaker = diff < 34;
+            }
+          }
+          return { id, isSpeaker: id === spk, hasTarget, targetAtHeadHeight,
+                   needYaw, facingYaw, offByDeg, facesSpeaker };
+        });
+        return { speaker: spk, rows };
+      };
+      window.dialogueGazeWhy = function(id){
+        const t = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
+        return { present: isPresent(id, t), walking: isWalking(id, t),
+                 isSpeaker: id === activeSpeakerAt(t),
+                 eligible: isPresent(id, t) && !isWalking(id, t) && id !== activeSpeakerAt(t) };
+      };
+    function presentAvatars(t) {
+      const ids = Object.keys(state.avatars);
+      const wk = state.diarization?.walkins || [];
+      // If no walkins (legacy), all present
+      if(!wk.length) return ids;
+      if(t===undefined) t = state.diarization ? Math.min(...Object.values(state.diarization.speakers).map((_,i)=>0)) : 0;
+      return ids.filter(id=> isPresent(id, t));
+    }
+    function frameAvatars(t, dur, opts) {
+      let avatars = Object.values(state.avatars);
+      if(state.diarization?.walkins?.length) {
+        const tv = t!==undefined ? t : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
+        const presentIds = new Set(presentAvatars(tv));
+        const filtered = Object.entries(state.avatars).filter(([id])=> presentIds.has(id)).map(([,av])=>av);
+        if(filtered.length) avatars = filtered;
+      }
+      if(!avatars.length || !state.mainHead) return;
+      const headsF=avatars.map(a=> getHeadWorldPos(a));
+      const center = new THREE.Vector3(0,0,0);
+      headsF.forEach(h=> center.add(h));
+      center.divideScalar(headsF.length);
+      center.y += 0.45;
+      let spread = 0.6;
+      for(let i=0;i<headsF.length;i++) for(let j=i+1;j<headsF.length;j++) {
+        const dx = headsF[i].x - headsF[j].x;
+        const dz = headsF[i].z - headsF[j].z;
+        spread = Math.max(spread, Math.hypot(dx,dz));
+      }
+      spread *= 1.4;
+      const hHalf = Math.atan(Math.tan((state.mainHead.camera.fov * Math.PI / 180)/2)* (state.mainHead.camera.aspect||1.77));
+      const roomW=state.lastBox ? (state.lastBox.max.x-state.lastBox.min.x) : 10;
+      const maxDist=Math.min(1.8, roomW*0.25);
+      const dist = Math.max(0.9, Math.min((spread/2+0.15)/Math.tan(hHalf), maxDist));
+      try {
+        const camPos=new THREE.Vector3(center.x, center.y + 0.9, center.z + dist);
+        const durUse = dur!==undefined ? dur : 550;
+        const o = opts||{};
+        if(durUse===0) { state.mainHead.camera.position.copy(camPos); state.mainHead.camera.lookAt(center); if(state.mainHead.controls){ state.mainHead.controls.target.copy(center); state.mainHead.controls.update(); } }
+        else moveCameraTo(camPos, center, durUse, o);
+        if(!state._lastLog || Date.now()-state._lastLog>2000) { state._lastLog=Date.now(); console.log(`[cam] frameAvatars center ${center.x.toFixed(2)},${center.z.toFixed(2)} dist ${dist.toFixed(2)} spread ${spread.toFixed(2)} present ${avatars.length}/${Object.keys(state.avatars).length} dur ${durUse}`); }
+      } catch(e) { console.warn('frameAvatars failed', e); }
+    }
+     function getHeadWorldPos(avatar) {
+      try {
+        const pos = avatar.armature.position.clone();
+        const s = avatar.armature.scale ? avatar.armature.scale.x : 1;
+        let headY=null;
+        try {
+          let head=null;
+          avatar.armature.traverse(o=>{ if(!head && o.isMesh && o.name==='AvatarHead') head=o; });
+          if(head){ const wp=new THREE.Vector3(); head.getWorldPosition(wp); headY=wp.y; }
+          else { const b=avatar.armature.getObjectByName('Head')||avatar.armature.getObjectByName('head'); if(b){ const wp=new THREE.Vector3(); b.getWorldPosition(wp); headY=wp.y; } }
+        } catch(e){}
+        // Fallback if headY is at ground (bad) — use pos+1.6*s
+        if(headY!==null && headY > pos.y + 0.3) { pos.y=headY; return pos; }
+        pos.y += 1.6 * s;
+        return pos;
+      } catch(e) { return new THREE.Vector3(0,1.6,0); }
+    }
+    // ------------------------------------------------------------------ gaze
+    // Rule: everyone who is not speaking looks at whoever is.
+    //
+    // Why this needed fixing rather than enabling. Two things were already
+    // "in place" and neither worked:
+    //
+    //   1. The player assigned `speakTo = <speaker>.armature`. The engine's
+    //      lookAtCamera wants a *TalkingHead* -- it reads speakTo.objectLeftEye
+    //      to target the eye midpoint. An armature has no such property, so it
+    //      fell through to `speakTo.getWorldPosition()`, and the armature origin
+    //      is at the FEET. Listeners were aiming at the floor.
+    //   2. lookAtCamera() is only ever called while speaking, from init, or from
+    //      a gesture. A listener is not speaking, so its gaze froze at whatever
+    //      the 750ms "lookat" animation captured the first time round.
+    //
+    // Known limit, not a bug: the engine clamps head yaw to +/-0.8 rad (~46
+    // degrees). On a straight four-abreast line the far-end listener may need a
+    // 135-180 degree turn, which no amount of look-at can reach. The body turn
+    // below covers most of that gap; the remainder needs the cast staged in an
+    // arc rather than a line.
+
+    /** World-space point at the speaker's head: the eye midpoint when the
+     *  avatar exposes eye objects, else the head bone, else an estimate.
+     *  Never the armature origin, which is the floor. */
+    function gazeTargetFor(speakerAvatar) {
+      if (!speakerAvatar) return null;
+      try {
+        if (speakerAvatar.objectLeftEye && speakerAvatar.objectRightEye) {
+          const a = new THREE.Vector3().setFromMatrixPosition(speakerAvatar.objectLeftEye.matrixWorld);
+          const b = new THREE.Vector3().setFromMatrixPosition(speakerAvatar.objectRightEye.matrixWorld);
+          return a.add(b).multiplyScalar(0.5);
+        }
+      } catch(e){}
+      try {
+        if (speakerAvatar.objectHead && speakerAvatar.objectHead.isObject3D) {
+          return new THREE.Vector3().setFromMatrixPosition(speakerAvatar.objectHead.matrixWorld);
+        }
+      } catch(e){}
+      try { return getHeadWorldPos(speakerAvatar); } catch(e){ return null; }
+    }
+
+    /** Point `listener`'s gaze at `speakerAvatar` (a TalkingHead or an avatar). */
+    function aimAt(listener, speakerAvatar) {
+      if (!listener || !speakerAvatar || listener === speakerAvatar) return false;
+      const p = gazeTargetFor(speakerAvatar);
+      if (!p) return false;
+      listener.speakTo = p;
+      return true;
+    }
+
+    /** Whoever is speaking at time t, or the last known speaker between lines. */
+    function activeSpeakerAt(t) {
+      const segs = state.diarization?.segments || [];
+      const now = t !== undefined ? t
+        : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
+      for (const s of segs) {
+        if (now >= s.start && now <= s.end) return s.speaker;
+      }
+      return state._lastSpeaker || null;
+    }
+
+    /** True while `sid` is mid walk-in, i.e. not yet in the conversation. */
+    function isWalking(sid, t) {
+      const now = t !== undefined ? t
+        : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
+      return (state.diarization?.walkins || [])
+        .some(w => w.speaker === sid && now >= w.t0 && now <= w.t1);
+    }
+
+    /** Rotate `avatar`'s body toward `target`, easing 35% of the way per call.
+     *
+     *  `target` is the other avatar (or an explicit world point). Both the
+     *  listener's head and the target point are derived here rather than assumed
+     *  -- an earlier version referenced `head`/`from` without ever defining them,
+     *  so every call threw a ReferenceError that the surrounding catch swallowed,
+     *  and no body ever turned while the eyes looked correct.
+     *
+     *  Works in the parent's frame: a nested armature's local rotation.y does
+     *  not equal its world yaw, and the camera helpers write local rotation too. */
+    function turnBodyToward(avatar, target) {
+      if (!avatar || !avatar.armature) return false;
+      try {
+        const head = getHeadWorldPos(avatar);
+        const from = (target && typeof target.x === 'number') ? target
+                                                           : getHeadWorldPos(target);
+        if (!from || !head) return false;
+
+        // Yaw of the parent, so local and world rotations can be compared.
+        let parentYaw = 0;
+        try {
+          const parent = avatar.armature.parent;
+          if (parent) {
+            const pd = new THREE.Vector3();
+            parent.getWorldDirection(pd);
+            parentYaw = Math.atan2(pd.x, pd.z);
+          }
+        } catch(e){}
+
+        const wrap = (v) => {
+          let x = v;
+          while (x > Math.PI) x -= Math.PI * 2;
+          while (x < -Math.PI) x += Math.PI * 2;
+          return x;
+        };
+
+        const worldWant = Math.atan2(from.x - head.x, from.z - head.z);
+        const dir = new THREE.Vector3();
+        avatar.armature.getWorldDirection(dir);
+        const worldCur = Math.atan2(dir.x, dir.z);
+
+        const yawWant = wrap(worldWant - parentYaw);
+        const yawCur = wrap(worldCur - parentYaw);
+        const diff = wrap(yawWant - yawCur);
+        if (Math.abs(diff) < 0.005) return false;   // already there
+
+        // Partial step: this runs every frame, so a full snap would look robotic.
+        avatar.armature.rotation.y = yawCur + diff * 0.35;
+        return true;
+      } catch(e) {
+        return false;
+      }
+    }
+
+    // Each lookAtCamera() pushes a fresh "lookat" animation into the engine's
+    // queue, so the eyes/head pass is throttled. The body pass is a plain
+    // rotation write with no queue cost and runs per frame, because the camera
+    // helpers (headCameraFor, placeDialogueCam, faceEachOther) also write
+    // armature.rotation.y and would otherwise undo it between throttled ticks.
+    const GAZE_INTERVAL_MS = 250;
+    let _gazeAt = 0;
+    let _bodySpeakerAvatar = null;
+
+    function updateGaze(nowMs) {
+      const speakerId = activeSpeakerAt();
+      if (!speakerId) return;
+      const speakerAvatar = state.avatars[speakerId];
+      if (!speakerAvatar) return;
+      if ((nowMs - _gazeAt) < GAZE_INTERVAL_MS) return;
+      _gazeAt = nowMs;
+      // One snapshot of playback time for the whole pass: isPresent/isWalking
+      // each recompute it from Date.now() when omitted, so calling them
+      // separately could straddle a frame and disagree.
+      const t = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
+
+      for (const [id, av] of Object.entries(state.avatars)) {
+        // The speaker faces the audience; headCameraFor and faceEachOther own
+        // that, deliberately presenting the face to camera. Do not fight them.
+        if (id === speakerId) continue;
+        // Not on stage yet, or still walking in: not in the conversation.
+        if (!isPresent(id, t)) continue;
+        if (isWalking(id, t)) continue;
+        aimAt(av, speakerAvatar);
+        // Placeholder avatars are stubs with no engine; body turn still applies.
+        try { if (typeof av.lookAtCamera === 'function') av.lookAtCamera(500); } catch(e){}
+      }
+      _bodySpeakerAvatar = speakerAvatar;
+    }
+
+    /** Per-frame body turn for listeners; runs after the camera helpers. */
+    function updateGazeBodies() {
+      const speakerAvatar = _bodySpeakerAvatar;
+      if (!speakerAvatar) return;
+      const t = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
+      for (const [id, av] of Object.entries(state.avatars)) {
+        if (av === speakerAvatar) continue;
+        if (!isPresent(id, t) || isWalking(id, t)) continue;
+        turnBodyToward(av, speakerAvatar);
+      }
+    }
+
+    function applyPresentVisibility(t) {
+      const walkins = state.diarization?.walkins || [];
+      if(!walkins.length) return;
+      for(const [id, av] of Object.entries(state.avatars)) {
+        const show = isPresent(id, t);
+        try { av.armature.visible = show; av.armature.traverse(o=>{ if(o.isMesh) o.visible = show; }); } catch(e){}
+      }
+    }
+    function doorForSpeaker(sid) {
+      const walkins = state.diarization?.walkins || [];
+      const wk = walkins.find(w=> w.speaker===sid);
+      if(wk && wk.door) return wk.door;
+      const d = state.diarization?.door;
+      if(d) return d;
+      return {x:0, z:2.1};
+    }
+    function updateWalkCamera() {
+      const wf = state._walkFollow;
+      if(!wf || !state.mainHead) return;
+      const av = state.avatars[wf.sid];
+      if(!av || !av.armature) return;
+      const head = getHeadWorldPos(av);
+      // Follow walker: camera trails 1.2m behind + 0.6m up, look at head
+      const yaw = av.armature.rotation.y;
+      const cam = state.mainHead.camera;
+      const behind = new THREE.Vector3(-Math.sin(yaw)*1.4, 0.5, -Math.cos(yaw)*1.4);
+      cam.position.copy(head.clone().add(behind));
+      cam.lookAt(head);
+      if(state.mainHead.controls) { state.mainHead.controls.target.copy(head); }
+      // Check end
+      if(performance.now() - wf.tStart >= wf.dur) {
+        state._walkFollow = null;
+        frameAvatars(wf.t1 + 0.1);
+        try { faceEachOther(wf.sid, wf.partner || state.diarization.entranceOrder[0]); } catch(e){}
+      }
+    }
+    function startWalkLerp(sid, t0, t1) {
+      const av = state.avatars[sid];
+      if(!av || !av.armature || !av._slotPos) return;
+      const door = doorForSpeaker(sid);
+      const sink=parseFloat(document.getElementById('feetSink')?.value||0.05);
+      const gg=window.getGroundY||getGroundY;
+      let gyDoor=0, gySlot=0; try{ gyDoor=gg(door.x, door.z); }catch(e){} try{ gySlot=gg(av._slotPos.x, av._slotPos.z); }catch(e){}
+      const start = new THREE.Vector3(door.x, gyDoor+sink, door.z);
+      const end = new THREE.Vector3(av._slotPos.x, gySlot+sink, av._slotPos.z);
+      // Keep _slotPos in sync with new sink
+      av._slotPos.y=gySlot+sink;
+      const dur = (t1 - t0)*1000;
+      const walkClip = 'media/3d/mixamo/clips/Standard Walk.fbx';
+      // Play walk clip stripped (in-place legs) + lerp position — isolated walk mixer so mood never kills walk
+      (async()=>{
+        try {
+          let mixer = state.walkMixers[sid];
+          if(!mixer) { mixer = new THREE.AnimationMixer(av.armature); state.walkMixers[sid]=mixer; }
+          let useClip = await loadClip(walkClip, av, false);
+          if(useClip) {
+            mixer.stopAllAction();
+            const action = mixer.clipAction(useClip);
+            // Axis auto: scale walk speed to cover 3m in dur
+            const clipDur = useClip.duration || 1.0;
+            const speed = 1.0;
+            action.reset().setEffectiveTimeScale(speed).setEffectiveWeight(1).setLoop(THREE.LoopRepeat).fadeIn(0.2).play();
+            setTimeout(()=>{ try{ action.fadeOut(0.3); mixer.stopAllAction(); }catch(e){} }, Math.max(0, dur + 100));
+          }
+        } catch(e) { console.warn('walk clip failed', e); }
+      })();
+      // Position lerp 3m south→slot, axis auto = vector door->slot
+      av.armature.position.copy(start);
+      av.armature.visible = true;
+      try { av.armature.traverse(o=>{ if(o.isMesh) o.visible=true; }); } catch(e){}
+      const yaw = Math.atan2(end.x - start.x, end.z - start.z);
+      av.armature.rotation.y = yaw;
+      // Follow walker camera
+      state._walkFollow = {sid, tStart: performance.now(), dur, t1, partner: dialoguePartner(sid, t0)};
+      const tStart = performance.now();
+      const gg2=window.getGroundY||getGroundY;
+      const sink2=parseFloat(document.getElementById('feetSink')?.value||0.05);
+      const tick = ()=>{
+        const elapsed = performance.now() - tStart;
+        const u = Math.min(1, elapsed / dur);
+        av.armature.position.lerpVectors(start, end, u);
+        // Hug terrain + respect sink live
+        try{ const curSink=parseFloat(document.getElementById('feetSink')?.value||0.05); const gy=gg2(av.armature.position.x, av.armature.position.z); av.armature.position.y=gy+curSink; }catch(e){}
+        if(u < 1 && state.isPlaying) requestAnimationFrame(tick);
+        else { try{ const gyE=gg2(end.x,end.z); av.armature.position.set(end.x, gyE+sink2, end.z); }catch(e){ av.armature.position.copy(end); } }
+      };
+      requestAnimationFrame(tick);
+    }
+    function dialoguePartner(focusId, segStart) {
+      if(!state.diarization || !state.diarization.segments) return null;
+      // Use exact segment start, not wall-clock, to avoid drift
+      const segs = state.diarization.segments;
+      const active = segs.find(s=> Math.abs(s.start - segStart) < 0.01 && s.speaker===focusId) || segs.find(s=> s.start <= segStart && segStart < s.end && s.speaker===focusId);
+      if(!active) return null;
+      let best=null, bestD=1e9;
+      const gap = 4.5;
+      for(const s of segs) {
+        if(s.speaker===focusId) continue;
+        if(s.end < active.start - gap || s.start > active.end + gap) continue;
+        const d = Math.min(Math.abs(s.start-active.start), Math.abs(s.end-active.end));
+        if(d < bestD) { bestD=d; best=s; }
+      }
+      return best ? best.speaker : null;
+    }
+    // FIX (item 2): rotate two conversing avatars to actually face each other.
+    // TalkingHead/RPM convention: rotation.y = 0 faces world +Z (matches the
+    // built-in speakTo default of (0, 1.6, 2)), so the yaw that points avatar
+    // A at avatar B is atan2(dx, dz) of the vector from A to B. This overrides
+    // whatever static rotation came from the picker tool for as long as these
+    // two are in conversation, and is independent of that tool's own yaw
+    // convention (we only ever compute yaw from live positions here).
+    function faceEachOther(idA, idB) {
+      const a = state.avatars[idA], b = state.avatars[idB];
+      if(!a || !b || !a.armature || !b.armature) return;
+      const pa = a.armature.position, pb = b.armature.position;
+      const dx = pb.x - pa.x, dz = pb.z - pa.z;
+      if(Math.abs(dx) < 1e-4 && Math.abs(dz) < 1e-4) return;
+      const yawA = Math.atan2(dx, dz), yawB = Math.atan2(-dx, -dz);
+      // Blend 25% toward camera for face visibility
+      try {
+        const camPos=state.mainHead.camera.position;
+        const toCamA=Math.atan2(camPos.x-pa.x, camPos.z-pa.z);
+        const toCamB=Math.atan2(camPos.x-pb.x, camPos.z-pb.z);
+        const lerp=(a,b,t)=>{ let d=b-a; while(d>Math.PI) d-=2*Math.PI; while(d<-Math.PI) d+=2*Math.PI; return a+d*t; };
+        a.armature.rotation.y = lerp(yawA, toCamA, 0.25);
+        b.armature.rotation.y = lerp(yawB, toCamB, 0.25);
+      } catch(e){
+        a.armature.rotation.y = yawA;
+        b.armature.rotation.y = yawB;
+      }
+    }
+      function placeDialogueCam(focusId, segStart, dur) {
+      if(!state.mainHead || !state.avatars[focusId]) return;
+      const focus = state.avatars[focusId];
+      const t = segStart !== undefined ? segStart : (Date.now()/1000 - (state._playStart||0));
+      const partnerId = dialoguePartner(focusId, t);
+      const isPartnerPresent = partnerId && state.avatars[partnerId] && isPresent(partnerId, t);
+      let members = [focus];
+      if(isPartnerPresent) {
+        faceEachOther(focusId, partnerId);
+        members.push(state.avatars[partnerId]);
+        if(focusId==="SPEAKER_00" && partnerId==="SPEAKER_02" && state.avatars["SPEAKER_01"] && isPresent("SPEAKER_01", t)) {
+          members.push(state.avatars["SPEAKER_01"]);
+        }
+      }
+      if(!isPartnerPresent) { headCameraFor(focusId, dur); return; }
+      const heads = members.map(m=> getHeadWorldPos(m));
+      const center = new THREE.Vector3(0,0,0);
+      heads.forEach(h=> center.add(h));
+      center.divideScalar(heads.length);
+      // Generous: use max span in XZ, margin 1.4
+      let span = 0;
+      for(let i=0;i<heads.length;i++) for(let j=i+1;j<heads.length;j++) span = Math.max(span, Math.hypot(heads[i].x-heads[j].x, heads[i].z-heads[j].z));
+      span = Math.max(span, 0.6);
+      const halfFov = (state.mainHead.camera.fov * Math.PI / 180) / 2;
+      const hHalf = Math.atan(Math.tan(halfFov)* (state.mainHead.camera.aspect||1.77));
+      let dist = ((span/2)+0.20)/Math.tan(hHalf);
+      dist = Math.max(1.6, Math.min(dist, 2.5));
+      const cam = state.mainHead.camera;
+      // Smart front for 2-shot: choose side most front-facing to both avatars
+      const lineDir = new THREE.Vector3().subVectors(heads[1], heads[0]); lineDir.y=0;
+      if(lineDir.lengthSq()<1e-6) lineDir.set(1,0,0); else lineDir.normalize();
+      let sideA = new THREE.Vector3(-lineDir.z, 0, lineDir.x);
+      let sideB = sideA.clone().negate();
+      let bestSide = sideA, bestScore = -Infinity;
+      for(const cand of [sideA, sideB]) {
+        let score=0;
+        for(const m of members) {
+          let look = new THREE.Vector3(0,0,1);
+          // speakTo is now always a world-space point, but it used to change type
+          // mid-session -- Vector3 at load, then an armature on the first
+          // segment -- so this branch silently flipped. Accept any point-like
+          // value; otherwise fall back to the avatar's own facing.
+          try {
+            const t = m.speakTo;
+            if (t && (t.isVector3 || (typeof t.x === 'number' && typeof t.z === 'number'))) {
+              look.subVectors(t, getHeadWorldPos(m)).normalize();
+            } else { m.armature.getWorldDirection(look); }
+            look.y=0; look.normalize();
+          } catch(e){ look.set(0,0,1); }
+          score += look.dot(cand.clone().negate());
+        }
+        if(score > bestScore) { bestScore=score; bestSide=cand; }
+      }
+      const prevPos = state._lastCamPos;
+      if(prevPos) {
+        const toPrev = new THREE.Vector3().subVectors(prevPos, center); toPrev.y=0;
+        if(toPrev.lengthSq()>1e-6 && bestSide.dot(toPrev) < 0) bestSide.negate();
+      }
+      console.log(`[cam] placeDialogueCam ${focusId} center ${center.x.toFixed(2)},${center.y.toFixed(2)},${center.z.toFixed(2)} span ${span.toFixed(2)} dist ${dist.toFixed(2)} cam y ${(center.y+0.45).toFixed(2)} dur ${dur||550}`);
+      const targetPos = new THREE.Vector3(center.x, center.y + 0.45, center.z).add(bestSide.clone().multiplyScalar(dist));
+      targetPos.x += 0.05;
+      moveCameraTo(targetPos, center, dur||550);
+      state._lastCamPos = targetPos.clone();
+    }
+    function headCameraFor(speakerId, dur) {
+      const av = state.avatars[speakerId];
+      if(!av) { console.warn('[cam] headCameraFor no av', speakerId); return; }
+      const headPos = getHeadWorldPos(av);
+      const s = av.armature.scale ? av.armature.scale.x : 1;
+      console.log(`[cam] headCameraFor ${speakerId} head ${headPos.x.toFixed(2)},${headPos.y.toFixed(2)},${headPos.z.toFixed(2)} s${s.toFixed(2)} camMode ${state.cameraMode}`);
+      const target = new THREE.Vector3(headPos.x, headPos.y + 0.06, headPos.z);
+      const camPos = new THREE.Vector3(headPos.x, headPos.y + 0.12, headPos.z + (0.7*s+0.50));
+      camPos.x += 0.12*s;
+      console.log(`[cam] target ${target.x.toFixed(2)},${target.y.toFixed(2)},${target.z.toFixed(2)} camPos ${camPos.x.toFixed(2)},${camPos.y.toFixed(2)},${camPos.z.toFixed(2)} dur ${dur||450}`);
+      try {
+        // solo should still slightly face partner, not just camera - more natural
+        const partnerId = dialoguePartner(speakerId, state._playStart ? (Date.now()/1000 - state._playStart) : 0);
+        const partner = partnerId ? state.avatars[partnerId] : null;
+        const toCam = new THREE.Vector3().subVectors(camPos, headPos);
+        toCam.y = 0; toCam.normalize();
+        let yawCam = Math.atan2(toCam.x, toCam.z);
+        if (partner && partner.armature) {
+          const partnerPos = getHeadWorldPos(partner);
+          const toPartner = new THREE.Vector3().subVectors(partnerPos, headPos);
+          toPartner.y = 0; if(toPartner.lengthSq()>1e-6) toPartner.normalize();
+          const yawPartner = Math.atan2(toPartner.x, toPartner.z);
+          // lerp 30% toward partner for solo - faces each other slightly
+          const lerp=(a,b,t)=>{ let d=b-a; while(d>Math.PI) d-=2*Math.PI; while(d<-Math.PI) d+=2*Math.PI; return a+d*t; };
+          yawCam = lerp(yawCam, yawPartner, 0.30);
+        }
+        av.armature.rotation.y = yawCam;
+      } catch(e) {}
+      moveCameraTo(camPos, target, dur || 450);
+    }
+     async function loadAvatars(speakers) {
+      statusEl.textContent = 'Loading avatars ' + Object.entries(speakers).map(([k,v])=>k+':'+(v.avatarUrl||'').split('/').pop()).join(', ') + '...';
+      console.log('[avatars] loadAvatars for', Object.entries(speakers).map(([k,v])=>k+'='+v.avatarUrl+'/'+v.body+'/'+v.name).join(' | '));
+      // Clear old avatars from scene before reloading (so woman/woman1 doesn't keep old man)
+      try {
+        for(const [oid, oldHead] of Object.entries(state.avatars)){
+          if(oldHead && oldHead.armature && oldHead.armature.parent) try{ oldHead.armature.parent.remove(oldHead.armature); }catch(e){}
+          try{ if(oldHead && oldHead.dispose) oldHead.dispose(); }catch(e){}
+        }
+      } catch(e){}
+      state.avatars={};
+      // Try real RPM GLBs with blendshapes (now fixed: AvatarRoot -> Armature), fallback to placeholder if offline or still fails
+      for (const [id, cfg] of Object.entries(speakers)) {
+        let head = null;
+        let useReal = false;
+        // Clean stray canvases
+        [...container.children].forEach((c,i)=>{ if(i>0) c.remove(); });
+        try {
+          // ensure avatarUrl exists - synthesize if missing (from remapped minimal speakers)
+          if (cfg && !cfg.avatarUrl) {
+            const idx = parseInt(id.split('_')[1]||0);
+            const avatars = ["assets/woman1.glb","assets/man1.glb","assets/woman2.glb","assets/man2.glb"];
+            cfg.avatarUrl = avatars[idx % avatars.length];
+            cfg.body = cfg.body || (idx%2===0 ? "F":"M");
+            cfg.name = cfg.name || `speaker_${idx+1}`;
+            if (!cfg.position) cfg.position = {x: -0.8 + idx*0.6, y:0, z:-0.85};
+            console.log(`[avatar] patched missing avatarUrl for ${id} -> ${cfg.avatarUrl}`);
+          }
+          if(!cfg || !cfg.avatarUrl){ console.warn(`skip ${id} no avatarUrl`, cfg); continue; }
+          const raw = String(cfg.avatarUrl).trim();
+          if(!raw){ console.warn(`skip ${id} empty avatarUrl`); continue; }
+          const tryHead = new TalkingHead(container, {
+            avatarOnly: true, avatarOnlyScene: state.mainHead.scene, avatarOnlyCamera: state.mainHead.camera, lipsyncLang: cfg.lipsyncLang || 'en', avatarMood: 'neutral', avatarIdleEyeContact: 0.3, avatarSpeakingEyeContact: 0.6, avatarIdleHeadMove: 0.4, avatarSpeakingHeadMove: 0.5
+          });
+          // Try local GLB (now has Armature after fix) with cache-bust to force reload of fixed file
+          let bustedUrl;
+          try { bustedUrl = new URL(raw + (raw.includes('?') ? '&' : '?') + 'v=2', location.href).href; } catch(e) { bustedUrl = raw + (raw.includes('?') ? '&' : '?') + 'v=2'; }
+          await tryHead.showAvatar({ url: bustedUrl, body: cfg.body || 'F', lipsyncLang: cfg.lipsyncLang || 'en', avatarMood: 'neutral' });
+          // Wait for lipsync processor to load (async import of lipsync-en.mjs) — otherwise viseme_anim stays empty
+          try {
+            let tries = 0;
+            while(!tryHead.lipsync['en'] && tries < 40) {
+              await new Promise(r=> setTimeout(r, 50));
+              tries++;
+            }
+            if(tryHead.lipsync['en']) console.log(`[lipsync] ${id} en ready after ${tries*50}ms`);
+            else console.warn(`[lipsync] ${id} en not ready after 2s — visemes may be empty`);
+          } catch(e) {}
+          // Full viseme alias: bare aa/PP/ih etc. -> viseme_aa/viseme_PP for TalkingHead
+          // Must rebuild mtAvatar correctly so TalkingHead's animate can find viseme_*
+          try {
+            const visMap = {aa:'aa', E:'E', I:'ih', O:'oh', U:'ou', PP:'PP', SS:'SS', TH:'TH', DD:'DD', FF:'FF', kk:'kk', nn:'nn', RR:'RR', CH:'CH', sil:'sil'};
+            let aliased = 0;
+            const meshes = [];
+            tryHead.armature.traverse(o=>{ if(o.isMesh && o.morphTargetDictionary) meshes.push(o); });
+            const headMeshForAlias = meshes.find(m=> m.name==='AvatarHead') || meshes.find(m=> m.morphTargetDictionary['aa']!==undefined) || meshes[0];
+            // Collect all meshes that have the bare morph, not just headMeshForAlias
+            for(const [vis, bare] of Object.entries(visMap)) {
+              const vName = 'viseme_'+vis;
+              for(const m of meshes) {
+                if(m.morphTargetDictionary[bare]!==undefined && m.morphTargetDictionary[vName]===undefined) {
+                  try { tryHead.addMixedMorphTarget([m], vName, {[bare]:1.0}); aliased++; } catch(e) {}
+                }
+              }
+            }
+            // Rebuild mtAvatar for new visemes — must be ms:[Float32Array], is:[idx], with proper fields
+            try {
+              for(const vis of Object.keys(visMap)) {
+                const vName = 'viseme_'+vis;
+                if(tryHead.mtAvatar[vName]) continue;
+                // Find which mesh now has vName after alias
+                let found = null;
+                for(const m of meshes) {
+                  if(m.morphTargetDictionary[vName]!==undefined) { found = m; break; }
+                }
+                if(found) {
+                  const idx = found.morphTargetDictionary[vName];
+                  // Clone template from an existing viseme entry if available, else create minimal
+                  const template = tryHead.mtAvatar['viseme_aa'] || tryHead.mtAvatar[Object.keys(tryHead.mtAvatar).find(k=>k.startsWith('viseme_'))] || {value:0, applied:0, baseline:0, newvalue:0, v:0, needsUpdate:false, easing:0.2, acc:0, limit:1};
+                  tryHead.mtAvatar[vName] = {
+                    ms: [found.morphTargetInfluences],
+                    is: [idx],
+                    value: 0, applied: 0, baseline: 0, newvalue: 0, v: 0, needsUpdate: false, easing: template.easing || 0.2, acc: 0, limit: 1
+                  };
+                }
+              }
+            } catch(e) { console.warn('mtAvatar rebuild failed', e); }
+            if(aliased) console.log(`[lips] ${id} aliased ${aliased} visemes (aa->viseme_aa etc.)`);
+            try {
+              const visAfter = tryHead.morphs ? tryHead.morphs.filter(m=> m.morphTargetDictionary && Object.keys(m.morphTargetDictionary).some(k=>k.startsWith('viseme_'))).length : 0;
+              const vCount = Object.keys(headMeshForAlias.morphTargetDictionary).filter(k=> k.startsWith('viseme_')).length;
+              console.log(`[lips] ${id} viseme count after alias: ${vCount} (head ${headMeshForAlias.name}, mtAvatar visemes ${Object.keys(tryHead.mtAvatar).filter(k=>k.startsWith('viseme_')).length})`);
+            } catch(e) {}
+          } catch(e) { console.warn('viseme alias failed', e); }
+          const pos = cfg.position || { x: 0, y: 0, z: 0 };
+          const sink=parseFloat(document.getElementById('feetSink')?.value||0.05);
+          let gy=0; try{ gy=(window.getGroundY||getGroundY)(pos.x, pos.z); }catch(e){ gy=0; }
+          tryHead.armature.position.set(pos.x, gy+sink, pos.z);
+          tryHead.armature.rotation.y = cfg.rotation || 0;
+          tryHead._slotPos = new THREE.Vector3(pos.x, gy+sink, pos.z);
+          tryHead._slotRot = cfg.rotation || 0;
+          tryHead.armature.visible = true;
+          try { const s=parseFloat(document.getElementById('charSize')?.value||0.5); tryHead.armature.scale.setScalar(s); } catch(e){}
+          state.mainHead.scene.add(tryHead.armature);
+          tryHead.speakTo = new THREE.Vector3(0, 1.6, 2);
+          // Wrap speakAudio to also feed recording
+          const origSpeak = tryHead.speakAudio.bind(tryHead);
+          const origHead = tryHead;
+          tryHead.speakAudio = (audioObj, opts, cb) => {
+            try { if(getAudioCtx().state==='suspended') getAudioCtx().resume(); } catch(e){}
+            // Also connect to recording dest if capturing
+            let src = null;
+            // Call original which will create its own source, but we also need to feed recordAudioDest
+            // So we intercept by creating a parallel source that also feeds recordAudioDest
+            // Instead, just call original and also create a parallel source for recording
+            try {
+              if(state.isRecording && state.recordAudioDest && audioObj.audio) {
+                const recSrc = getAudioCtx().createBufferSource();
+                recSrc.buffer = audioObj.audio;
+                recSrc.connect(state.recordAudioDest);
+                recSrc.start(0);
+                // Stop it when original ends (approx)
+                setTimeout(()=>{ try{ recSrc.stop(); }catch(e){} }, (audioObj.audio.duration||1)*1000 + 100);
+              }
+            } catch(e){}
+            return origSpeak(audioObj, opts, cb);
+          };
+          head = tryHead;
+          useReal = true;
+          statusEl.textContent = `Loaded ${cfg.name || id} (real RPM)`;
+        } catch(e) {
+          console.warn(`Real GLB failed for ${id} (${cfg.avatarUrl}):`, e.message, '-> placeholder');
+          // Fallback placeholder (fast, white studio)
+          const placeholder = new THREE.Group();
+          const cyl = new THREE.Mesh(new THREE.CylinderGeometry(0.35,0.35,1.7,12), new THREE.MeshBasicMaterial({color: cfg.body==='M'?0x3b82f6:0xec4899}));
+          cyl.position.y=0.85; placeholder.add(cyl);
+          const headSphere = new THREE.Mesh(new THREE.SphereGeometry(0.18,12,10), new THREE.MeshBasicMaterial({color:0xffdbac}));
+          headSphere.position.y=1.75; placeholder.add(headSphere);
+          const labelCanvas = document.createElement('canvas'); labelCanvas.width=256; labelCanvas.height=64;
+          const ctx=labelCanvas.getContext('2d'); ctx.fillStyle='#222'; ctx.fillRect(0,0,256,64); ctx.fillStyle='#fff'; ctx.font='bold 20px sans-serif'; ctx.fillText(cfg.name||id,10,38);
+          const tex=new THREE.CanvasTexture(labelCanvas); const spriteMat=new THREE.SpriteMaterial({map:tex}); const sprite=new THREE.Sprite(spriteMat); sprite.position.y=2.15; sprite.scale.set(1.0,0.25,1); placeholder.add(sprite);
+          const pos = cfg.position || { x: 0, y: 0, z: 0 };
+          placeholder.position.set(pos.x, pos.y, pos.z);
+          placeholder.rotation.y = cfg.rotation || 0;
+          state.mainHead.scene.add(placeholder);
+          const mockHead = {
+            armature: placeholder,
+            speakTo: new THREE.Vector3(0, 1.6, 2),
+            _src: null,
+            speakAudio: (audioObj, opts, cb) => {
+              try { if(getAudioCtx().state==='suspended') getAudioCtx().resume(); } catch(e) {}
+              try { if(mockHead._src) { try{ mockHead._src.stop(); } catch(e){} } } catch(e){}
+              const buf = audioObj.audio;
+              if(!buf || buf.length===0) { if(cb) setTimeout(()=>cb(''), 10); return; }
+              const src = getAudioCtx().createBufferSource();
+              src.buffer = buf;
+              src.connect(getAudioCtx().destination);
+              try { if(state.isRecording && state.recordAudioDest) src.connect(state.recordAudioDest); } catch(e){}
+              src.onended = ()=>{ if(cb) cb(''); };
+              mockHead._src = src;
+              try { src.start(0); } catch(e){ console.warn('speakAudio start failed', e); if(cb) cb(''); }
+            },
+            stop: ()=>{ try{ if(mockHead._src) mockHead._src.stop(); }catch(e){} mockHead._src=null; },
+            start: ()=>{},
+            animate: ()=>{}
+          };
+          head = mockHead;
+          statusEl.textContent = `Loaded ${cfg.name || id} (placeholder)`;
+        }
+        state.avatars[id] = head;
+      }
+      try {
+        const canvas = state.mainHead.renderer.domElement;
+        state.mainHead.renderer.setClearColor(0xffffff, 1);
+        [...container.children].forEach((c,i)=>{ if(c!==canvas) c.remove(); });
+      } catch(e) {}
+      // Apply staged visibility at t=0 (first solo) + setup drag live spots
+      try { applyPresentVisibility(0); frameAvatars(0,0,{force:true}); if(state._setupDrag) state._setupDrag(); } catch(e) {}
+      const realCount = Object.values(state.avatars).filter(a=> a.speakAudio && a.armature && a.armature.type!=='Group' || a.armature.children.some(ch=> ch.geometry && ch.geometry.morphAttributes)).length;
+      statusEl.textContent = `${Object.keys(state.avatars).length} avatars ready (${Object.values(state.avatars).filter(a=> a.constructor.name==='TalkingHead').length} real, placeholders for offline).`;
+    }
+    let audioCtx = null;
+    function getAudioCtx() {
+      if(!audioCtx || audioCtx.state==='closed') audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if(audioCtx.state==='suspended') audioCtx.resume().catch(()=>{});
+      if(!state.recordAudioDest || state.recordAudioDest.context!==audioCtx) {
+        try { state.recordAudioDest = audioCtx.createMediaStreamDestination(); } catch(e) {}
+      }
+      return audioCtx;
+    }
+    // These replaced the two file pickers, which are gone. Both remain real
+    // functions: the job loader fetches audio and dialogue through this same
+    // path, so a job is prepared exactly as a manual pick used to prepare one.
+    async function loadAudioSource(src) {
+      const res = await fetch(src, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`audio ${res.status}`);
+      const ctx = getAudioCtx();
+      state.audioBuffer = await ctx.decodeAudioData(await res.arrayBuffer());
+      statusEl.textContent = `Audio loaded: ${state.audioBuffer.duration.toFixed(1)}s`;
+      checkReady();
+    }
+    async function loadDiarizationSource(src) {
+      const res = await fetch(src, { cache: 'no-store' });
+      if (!res.ok) throw new Error(`dialogue ${res.status}`);
+      state.diarization = await res.json();
+      const n = state.diarization.segments ? state.diarization.segments.length : 0;
+      statusEl.textContent = `Dialogue loaded: ${n} lines`;
+      if (Object.keys(state.avatars).length === 0 && state.diarization.speakers) {
+        await loadAvatars(state.diarization.speakers);
+      }
+      checkReady();
+    }
+    async function ensureAudioDecoded(){
+        if(state.audioBuffer || !state._pendingAudioArrayBuffer) return;
+        try { const ctx=getAudioCtx(); state.audioBuffer=await ctx.decodeAudioData(state._pendingAudioArrayBuffer.slice(0)); statusEl.textContent=`Audio decoded ${state.audioBuffer.duration.toFixed(1)}s`; } catch(e){ console.warn('decode fail', e); }
+      }
+    function validateSpots(){
+        if(!state.diarization || !Object.keys(state.avatars).length) return false;
+        // No box required (as before inserting background) — just check avatars exist
+        return true;
+      }
+    function checkReady() {
+      // Name the job being played. It replaced the two file pickers, so without
+      // this there was no indication of where the audio and dialogue came from.
+      try {
+        const src = document.getElementById('jobSource');
+        if (src) {
+          const explicit = new URLSearchParams(location.search).get('job');
+          const id = explicit || localStorage.getItem('wav_job_id') || 'default';
+          const n = state.diarization ? Object.keys(state.diarization.speakers || {}).length : 0;
+          src.innerHTML = explicit
+            ? `Job <b>#${id}</b> &middot; ${n} speaker${n === 1 ? '' : 's'}`
+            : `No job selected &middot; showing the default dialogue &middot; <a href="config.html" style="color:#7dd3fc">open Dialogue Config</a>`;
+        }
+      } catch(e){}
+      const ready = (state.audioBuffer || state._pendingAudioArrayBuffer) && state.diarization && validateSpots();
+      if (state._noAudio && !state.audioBuffer && !state._pendingAudioArrayBuffer) {
+        // Avatars can be ready while the audio is missing; say which is missing
+        // rather than reporting success for a Play button that does nothing.
+        statusEl.textContent = 'No audio for this dialogue — open Dialogue Config to create or pick a job';
+        playBtn.disabled = true;
+        recordBtn.disabled = true;
+        return;
+      }
+      const canPlay = ready && !state.prePlayEditing ? false : ready;
+      playBtn.disabled = !ready;
+      recordBtn.disabled = !ready;
+      // These used to point at controls the panel no longer has: a "Confirm Spots"
+      // button and BG Size/Background sliders. Naming a control the user cannot
+      // find is worse than saying nothing.
+      if(state.prePlayEditing && Object.keys(state.avatars).length) statusEl.textContent='Drag an avatar to reposition it, then Play';
+      else if(state.prePlayEditing) statusEl.textContent='Loading avatars...';
+      else if(!validateSpots()) statusEl.textContent='Warning: an avatar is inside furniture — move it clear';
+      
+      if (ready) {
+        const dur = state.audioBuffer.duration.toFixed(1);
+        const maxEnd = Math.max(...state.diarization.segments.map(s=>s.end)).toFixed(1);
+        if (parseFloat(maxEnd) > parseFloat(dur) + 0.5) {
+          statusEl.textContent = `Ready but dialogue ends at ${maxEnd}s > audio ${dur}s — will skip out-of-bounds segments (use jobs/full_mono_london.wav for London dialogue)`;
+          statusEl.style.color='#f87171';
+        } else {
+          statusEl.textContent = `Ready to play! Audio ${dur}s, dialogue ${maxEnd}s — Record will capture at 24fps`;
+          statusEl.style.color='#86efac';
+        }
+      }
+    }
+    function extractSegment(buffer, startSec, endSec) {
+      const ctx = getAudioCtx();
+      startSec = Math.max(0, startSec); endSec = Math.max(startSec, endSec);
+      const sampleRate = buffer.sampleRate; const numChannels = buffer.numberOfChannels;
+      const startSample = Math.floor(startSec * sampleRate); const endSample = Math.min(Math.floor(endSec * sampleRate), buffer.length);
+      if (endSample <= startSample || startSample >= buffer.length) { console.warn(`skip segment ${startSec.toFixed(2)}-${endSec.toFixed(2)} vs dur ${buffer.duration.toFixed(2)}`); return ctx.createBuffer(buffer.numberOfChannels, 1, sampleRate); }
+      const segmentLength = endSample - startSample;
+      const newBuffer = getAudioCtx().createBuffer(numChannels, segmentLength, sampleRate);
+      for (let c = 0; c < numChannels; c++) { const oldData = buffer.getChannelData(c); const newData = newBuffer.getChannelData(c); for (let i = 0; i < segmentLength; i++) newData[i] = oldData[startSample + i]; }
+      return newBuffer;
+    }
+    function estimateWordData(text, durationMs) {
+      const words = text.split(/\s+/).filter(w => w.length > 0);
+      const avgDur = durationMs / words.length;
+      const wtimes = words.map((_, i) => Math.round(i * avgDur));
+      const wdurations = words.map(() => Math.round(avgDur * 0.8));
+      return { words, wtimes, wdurations };
+    }
+    // FIX (item 4): intro reveal — wide shot of the whole cast first, then a brief
+    // solo close-up introduction of each speaker in turn, before the normal
+    // per-segment dialogue camera logic takes over. Tunable durations:
+    const INTRO_WIDE_MS = 1200;
+    const INTRO_PER_SPEAKER_MS = 700;
+    function computeIntroDelayMs() {
+      const n = state.diarization?.walkins?.length ? (presentAvatars(0).length || 1) : (state.diarization?.speakers ? Object.keys(state.diarization.speakers).length : 0);
+      return n ? INTRO_WIDE_MS + n * INTRO_PER_SPEAKER_MS : 0;
+    }
+    async function playIntro() {
+      if(!state.diarization || !state.diarization.speakers) return;
+      // Staged: wide on present at t=0 only (first solo)
+      frameAvatars(0,0,{force:true});
+      await new Promise(r=> setTimeout(r, INTRO_WIDE_MS));
+      if(!state.isPlaying) return;
+      const presentAt0 = presentAvatars(0);
+      for(const id of presentAt0) {
+        if(!state.isPlaying) return;
+        if(!state.avatars[id]) continue;
+        headCameraFor(id);
+        await new Promise(r=> setTimeout(r, INTRO_PER_SPEAKER_MS));
+      }
+    }
+     async function playDialogue() {
+      mergePickerLive();
+      state.prePlayEditing=false;
+      if(!validateSpots()){ statusEl.textContent='Move avatars away from furniture before Play'; state.prePlayEditing=true; return; }
+      await ensureAudioDecoded();
+      if (!state.audioBuffer || !state.diarization) { statusEl.textContent='Audio not ready yet — decoding...'; await new Promise(r=>setTimeout(r,600)); if(!state.audioBuffer) return; }
+      if(Object.keys(state.avatars).length===0 && state.diarization && state.diarization.speakers) {
+        statusEl.textContent = 'Loading avatars (first Play, after gesture)...';
+        await loadAvatars(state.diarization.speakers);
+        checkReady();
+      }
+      // Ensure AudioContext is running after gesture (1 solo intro keep)
+      try { await getAudioCtx().resume(); } catch(e){}
+      try { if(state.mainHead && state.mainHead.audioCtx) await state.mainHead.audioCtx.resume(); } catch(e){}
+      for(const av of Object.values(state.avatars)) { try{ if(av.audioCtx) await av.audioCtx.resume(); }catch(e){} }
+      state.isPlaying = true; playBtn.disabled = true; stopBtn.disabled = false; downloadBtn.disabled = true;
+      Object.values(state.avatars).forEach(av => { try { av.stop(); av.start(); } catch(e) {} });
+      // Staged entrance: first speaker solo at t=0
+      applyPresentVisibility(0); frameAvatars(0,0,{force:true});
+      statusEl.textContent = 'Introducing cast...';
+      await playIntro();
+      if(!state.isPlaying) return; // Stop was clicked during the intro
+      state._playStart = Date.now()/1000;
+      // Schedule walk-in reveals + 2-shot waiting camera (static on present group) — after _playStart so sync with segments
+      const walkins = state.diarization?.walkins || [];
+      for(const w of walkins) {
+        const t0ms = w.t0*1000, t1ms = w.t1*1000;
+        state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; startWalkLerp(w.speaker, w.t0, w.t1); }, t0ms));
+        state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; frameAvatars(w.t1+0.15); }, t1ms+150));
+        state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; applyPresentVisibility(w.t0); }, t0ms));
+        state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; applyPresentVisibility(w.t1); }, t1ms));
+      }
+      statusEl.textContent = 'Playing dialogue...';
+      const { segments } = state.diarization;
+      // Precompute dynamic cam durations (gap*0.7, base wide800 2-shot550 solo450, cap 900/600, floor 250)
+      segments.forEach((seg,i)=>{
+        const nextStart = i < segments.length-1 ? segments[i+1].start : seg.end + 2;
+        const gapMs = (nextStart - seg.start)*1000;
+        const isWide = state.cameraMode==='wide';
+        const base = isWide ? 800 : (dialoguePartner(seg.speaker, seg.start) ? 550 : 450);
+        const cap = isWide ? 900 : 600;
+        seg._camDur = Math.max(250, Math.min(base, gapMs*0.7, cap));
+      });
+      segments.forEach((seg) => {
+        const avatar = state.avatars[seg.speaker];
+        if (!avatar) { console.warn(`No avatar for speaker: ${seg.speaker}`); return; }
+        if (seg.end <= seg.start || seg.start >= state.audioBuffer.duration) { console.warn(`skip out-of-bounds ${seg.speaker} ${seg.start}-${seg.end} vs dur ${state.audioBuffer.duration.toFixed(2)}`); return; }
+        const speakerName = state.diarization.speakers?.[seg.speaker]?.name || seg.speaker;
+        const segmentDuration = (seg.end - seg.start) * 1000;
+        const timeoutId = setTimeout(() => {
+          if (!state.isPlaying) return;
+          speakerLabel.textContent = speakerName; speakerLabel.classList.add('active');
+          subtitleBox.textContent = seg.text; subtitleBox.classList.add('active');
+          // Everyone who is not speaking looks at whoever is. Aim at the speaker's
+          // HEAD -- this used to assign `avatar.armature`, whose origin is the
+          // floor, so the engine's lookAtCamera resolved the target to the
+          // speaker's feet. The speaker keeps facing the camera.
+          state._lastSpeaker = seg.speaker;
+          Object.entries(state.avatars).forEach(([id, av]) => {
+            if (id === seg.speaker) { av.speakTo = null; return; }
+            if (!isPresent(id, seg.start) || isWalking(id, seg.start)) return;
+            aimAt(av, avatar);
+          });
+          const walkActiveAt = (state.diarization?.walkins||[]).find(w=> seg.start >= w.t0 && seg.start < w.t1);
+      // walk has absolute priority - don't do segment camera during walk, let walker be visible
+      if (walkActiveAt) {
+        try {
+          // during walk, camera follows walker via updateWalkCamera spring, not segment framing
+          // just ensure walker is visible, don't move to talker's solo/2-shot
+          if (state.avatars[walkActiveAt.speaker]) {
+            // keep walker's camera as is, don't override with talker's camera
+          }
+        } catch(e){}
+      }
+      try {
+          if(walkActiveAt) {
+            // hold camera on walker - don't do frameAvatars wide, let walk follow handle it
+            // keep current camera, just ensure visibility
+            applyPresentVisibility(seg.start);
+          } else if(state.cameraMode==='wide') {
+            frameAvatars(seg.start, seg._camDur);
+          } else if(state.cameraMode==='solo') {
+            headCameraFor(seg.speaker, 900);
+          } else {
+            // hybrid: solo + 2-shot - very slow, stable, with cooldown
+            const idx = segments.indexOf(seg);
+            const prevSpk = idx>0 ? segments[idx-1].speaker : null;
+            const partner = dialoguePartner(seg.speaker, seg.start);
+            const partnerPresent = partner && state.avatars[partner] && isPresent(partner, seg.start);
+            const isMonologue = prevSpk && prevSpk===seg.speaker;
+            const nextSeg = segments[idx+1];
+            const gapToNext = nextSeg ? (nextSeg.start - seg.end) : 10;
+            const nowMs = seg.start*1000;
+            const lastMove = state._lastCamMove || 0;
+            const lastSpeaker = state._lastCamSpeaker || null;
+            // very long cooldown for stability - don't move more than every 3.5s, very slow
+            const cooldown = (nowMs - lastMove) < 3500;
+            // solo 85% for 2-speaker: only 1 in 7 is 2-shot, so mostly solo
+            const shouldSolo = isMonologue || !partnerPresent || gapToNext > 2.5 || cooldown || (idx % 7 !== 1);
+            const sameAsLastCam = lastSpeaker === seg.speaker && cooldown;
+            if(sameAsLastCam) {
+              // hold - don't move at all for same speaker
+            } else if(!shouldSolo && partnerPresent) {
+              placeDialogueCam(seg.speaker, seg.start, 2800);
+              state._lastCamMove = nowMs;
+              state._lastCamSpeaker = seg.speaker;
+            } else if (!isMonologue || idx===0) {
+              headCameraFor(seg.speaker, 2800);
+              state._lastCamMove = nowMs;
+              state._lastCamSpeaker = seg.speaker;
+            } else {
+              // monologue hold
+            }
+          }
+      } catch(e) { console.warn('camera failed', e); }
+          const segmentAudio = extractSegment(state.audioBuffer, seg.start, seg.end);
+          let wordData; if (seg.words && seg.wtimes && seg.wdurations) wordData = { words: seg.words, wtimes: seg.wtimes, wdurations: seg.wdurations }; else wordData = estimateWordData(seg.text, segmentDuration);
+          // Apply mood from clip catalog (go_emotion -> TalkingHead avatarMood) + optional FBX clip
+          try {
+            const mood = seg.mood || seg.go_label || 'neutral';
+            if(avatar.setMood) avatar.setMood(mood);
+            else if(avatar.avatarMood !== undefined) avatar.avatarMood = mood;
+          } catch(e) {}
+          // Full FBX clip for the line (always fbx now the Anim picker is gone)
+          if((state.animMode==='fbx' || state.animMode==='hybrid' || state.animMode==='mood') && seg.clip) {
+            // For mood mode, clip is still available but we only use setMood, not FBX
+            // For fbx/hybrid, play the clip
+            if(state.animMode==='fbx' || state.animMode==='hybrid') {
+              (async()=>{
+                try {
+                  const av = state.avatars[seg.speaker];
+                  if(!av || !av.armature) return;
+                  let mixer = state.mixers[seg.speaker];
+                  if(!mixer) {
+                    mixer = new THREE.AnimationMixer(av.armature);
+                    state.mixers[seg.speaker] = mixer;
+                  }
+                  const clip = await loadClip(seg.clip, av);
+                  if(clip) {
+                    // In Full FBX mode with visemes available, strip head morph tracks so lip-sync (viseme/jaw) is not overridden by body clip
+                    try {
+                      const hasVis = av.armature && (()=>{ let c=0; av.armature.traverse(o=>{ if(o.morphTargetDictionary && Object.keys(o.morphTargetDictionary).some(k=>k.startsWith('viseme_'))) c++; }); return c>0; })();
+                      if (hasVis) {
+                        const origLen = clip.tracks.length;
+                        clip.tracks = clip.tracks.filter(t => {
+                          const n = t.name.toLowerCase();
+                          // keep body/bone tracks, drop head viseme/jaw/mouth morphs that would fight lip-sync
+                          if (n.includes('viseme') || n.includes('jawopen') || n.includes('mouthopen') || n.includes('mouth_') ) return false;
+                          // also drop tracks that target head mesh morphs if they look like viseme
+                          if (n.includes('avatarhead') && (n.includes('.morph') || n.includes('blend'))) return false;
+                          return true;
+                        });
+                        if (clip.tracks.length !== origLen) console.log(`[anim] filtered ${origLen - clip.tracks.length} head morph tracks from ${seg.clip} to preserve lip-sync`);
+                      }
+                    } catch(e){}
+                    mixer.stopAllAction();
+                    const action = mixer.clipAction(clip);
+                    // Keep natural speed, not stretch-to-fit (very fast)
+                    const timeScale = 1.0;
+                    action.reset().setEffectiveTimeScale(timeScale).setEffectiveWeight(1).setLoop(THREE.LoopRepeat).fadeIn(0.4).play();
+                    setTimeout(()=>{ try{ action.fadeOut(0.5); }catch(e){} }, Math.max(0, segmentDuration - 300));
+                  }
+                } catch(e) { console.warn('clip play failed', seg.clip, e.message); }
+              })();
+            }
+          }
+          // Hybrid lip-sync per UI selection
+          try {
+            let headMesh = null, best = null;
+            const candidates = [];
+            if(avatar.armature) {
+              avatar.armature.traverse(o=>{
+                if(!o.isMesh || !o.morphTargetDictionary) return;
+                candidates.push(o);
+                if(!best || Object.keys(o.morphTargetDictionary).length > Object.keys(best.morphTargetDictionary).length) best = o;
+              });
+              headMesh = candidates.find(o=> o.name==='AvatarHead') ||
+                         candidates.filter(o=> o.morphTargetDictionary['viseme_aa']!==undefined).sort((a,b)=>Object.keys(b.morphTargetDictionary).length - Object.keys(a.morphTargetDictionary).length)[0] ||
+                         candidates.filter(o=> o.morphTargetDictionary.jawOpen!==undefined).sort((a,b)=>Object.keys(b.morphTargetDictionary).length - Object.keys(a.morphTargetDictionary).length)[0] ||
+                         candidates.filter(o=> o.morphTargetDictionary['aa']!==undefined).sort((a,b)=>Object.keys(b.morphTargetDictionary).length - Object.keys(a.morphTargetDictionary).length)[0] ||
+                         best;
+              if(!headMesh && avatar.morphTargetDictionary) headMesh = avatar;
+            }
+            const mode = state.lipsyncMode || 'auto';
+            if(!headMesh || !headMesh.morphTargetDictionary) {
+              // Placeholder has no morphs — skip
+            } else {
+              const dict = headMesh.morphTargetDictionary;
+              const visCount = Object.keys(dict).filter(k=> k.startsWith('viseme_')).length;
+              const bareVisCount = Object.keys(dict).filter(k=> ['aa','PP','DD','FF','CH','E','I','ih','O','oh','U','ou','kk','nn','RR','sil'].includes(k)).length;
+              if(seg.start < 2) console.log(`[lips] ${seg.speaker} headMesh ${headMesh.name} morphs ${Object.keys(dict).length} visemes ${visCount} (bare ${bareVisCount}) mode ${mode} words ${wordData.words.length}`);
+              // Hybrid: viseme primary (TalkingHead smoothed), jaw fallback if viseme stays 0
+              const hasFullVisemes = visCount >= 10;
+              let useJawFallback = mode === 'jaw' || (mode === 'auto' && !hasFullVisemes);
+              // Watchdog: if viseme expected but not moving after 600ms, fallback to jaw - natural speed
+              let jawFallbackTimer = null;
+              if(!useJawFallback && hasFullVisemes) {
+                const visIdxProbe = dict['viseme_aa'] ?? dict['aa'] ?? dict['jawOpen'];
+                let peak = 0;
+                const iv = setInterval(()=>{
+                  try { const v = visIdxProbe!==undefined ? headMesh.morphTargetInfluences[visIdxProbe] : 0; peak = Math.max(peak, v); } catch(e){}
+                }, 30);
+                jawFallbackTimer = setTimeout(()=>{
+                  clearInterval(iv);
+                  if(peak < 0.08) {
+                    console.warn(`[lips] ${seg.speaker} viseme still 0 (peak ${peak.toFixed(2)}), falling back to jaw (natural 2Hz)`);
+                    const jawIdxFb = dict['jawOpen']??dict['mouthOpen']??dict['aa'];
+                    if(jawIdxFb===undefined) return;
+                    // natural 2Hz: every other word, moderate open, longer hold
+                    wordData.wtimes.forEach((t, i)=>{
+                      if(i%2!==0) return; // every other word = 2Hz, not every word 3Hz
+                      const w = wordData.words[i];
+                      const dur = Math.max(wordData.wdurations[i] || 400, 350);
+                      let open = 0.45;
+                      if(/^[aeiou]/i.test(w)) open = 0.60;
+                      if(/^[o]/i.test(w)) open = 0.52;
+                      if(/^[bp]/i.test(w)) open = 0.30;
+                      setTimeout(()=>{
+                        if(!state.isPlaying) return;
+                        headMesh.morphTargetInfluences[jawIdxFb]=open;
+                        setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdxFb]=open*0.4; }catch(e){} }, dur*0.5);
+                        setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdxFb]=0; }catch(e){} }, dur*0.90);
+                      }, t);
+                    });
+                  } else {
+                    console.log(`[lips] ${seg.speaker} viseme peak ${peak.toFixed(2)} — native viseme working`);
+                  }
+                }, 500);
+              }
+              const jawIdx = dict['jawOpen'] ?? dict['mouthOpen'] ?? dict['aa'];
+              if(useJawFallback && jawIdx !== undefined) {
+                // Natural jaw: every other word 2Hz moderate
+                wordData.wtimes.forEach((t,i)=>{
+                  if(i%2!==0) return;
+                  const w=wordData.words[i];
+                  const dur=Math.max(wordData.wdurations[i]||380, 300);
+                  let open=0.45;
+                  if(/^[aeiou]/i.test(w)) open=0.58;
+                  if(/^[o]/i.test(w)) open=0.50;
+                  if(/^[bp]/i.test(w)) open=0.30;
+                  setTimeout(()=>{
+                    if(!state.isPlaying) return;
+                    headMesh.morphTargetInfluences[jawIdx]=open;
+                    setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdx]=open*0.4; }catch(e){} }, dur*0.5);
+                    setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdx]=0; }catch(e){} }, dur*0.90);
+                  }, t);
+                });
+                if(seg.start < 2) console.log(`[lips] ${seg.speaker} using JAW natural 2Hz (visemes: ${visCount}) segDur ${segmentDuration}`);
+                if(seg.start < 2) console.log(`[lips] ${seg.speaker} using JAW FALLBACK slow (visemes: ${visCount}) segDur ${segDur} words ${wordData.words.length}`);
+              } else if(seg.start < 2 && hasFullVisemes) {
+                console.log(`[lips] ${seg.speaker} trusting native viseme animation only (visemes: ${visCount})`);
+              }
+              // Clear watchdog if segment ends early
+              setTimeout(()=>{ try{ clearInterval(jawFallbackTimer); }catch(e){} }, segmentDuration + 200);
+            }
+          } catch(e) { console.warn('mouth check failed', e); }
+          avatar.speakAudio({ audio: segmentAudio, ...wordData }, { lipsyncLang: seg.lipsyncLang || state.diarization.speakers?.[seg.speaker]?.lipsyncLang || 'en' }, () => {});
+          setTimeout(() => { subtitleBox.classList.remove('active'); speakerLabel.classList.remove('active'); }, segmentDuration + 200);
+        }, seg.start * 1000);
+        state.scheduledTimeouts.push(timeoutId);
+      });
+      // End when the AUDIO ends, not when the last line does. Taking this from
+      // the segments alone meant a dialogue belonging to a longer recording kept
+      // the player running for a minute of silence after the audio was over --
+      // four jobs did exactly that, each with a dialogue 61s longer than its own
+      // audio. Out-of-bounds lines were already skipped; this stops the dead air.
+      const audioEndMs = (state.audioBuffer && state.audioBuffer.duration ? state.audioBuffer.duration : Infinity) * 1000;
+      // The +1s tail is the "hold the last frame a beat, then stop" grace period.
+      // It must NEVER take part in the mismatch test: folding it in made the
+      // check fire on every healthy job whose last line lands within a second of
+      // the audio, and then printed both numbers identical ("runs to 100.7s but
+      // the audio is only 100.7s"). Lines end exactly at the audio all the time.
+      const lastLineEndMs = segments[segments.length - 1].end * 1000;
+      const totalDuration = Math.min(lastLineEndMs + 1000, audioEndMs);
+      // Same 5s tolerance the server uses (DIALOGUE_OVERRUN_TOLERANCE_S) so the
+      // banner and the API can never disagree about the same job.
+      if (lastLineEndMs > audioEndMs + 5000) {
+        console.warn(`[dialogue] lines run to ${(lastLineEndMs/1000).toFixed(1)}s but the audio is only ${(audioEndMs/1000).toFixed(1)}s -- this dialogue may belong to another recording`);
+        showConsistencyWarning(`This dialogue runs to ${(lastLineEndMs/1000).toFixed(1)}s but the audio is only ${(audioEndMs/1000).toFixed(1)}s. The lines after that point were written for a different recording.`);
+      }
+      const endTimeout = setTimeout(() => { state.isPlaying = false; playBtn.disabled = false; stopBtn.disabled = true; statusEl.textContent = 'Dialogue finished.'; }, totalDuration);
+      state.scheduledTimeouts.push(endTimeout);
+    }
+    function stopDialogue() {
+      state.isPlaying = false; state.scheduledTimeouts.forEach(clearTimeout); state.scheduledTimeouts = [];
+      Object.values(state.avatars).forEach(av => { try { av.stop(); av.start(); } catch(e) {} });
+      subtitleBox.classList.remove('active'); speakerLabel.classList.remove('active');
+      playBtn.disabled = false; stopBtn.disabled = true; recordBtn.disabled = !(state.audioBuffer && state.diarization);
+      if (state.isRecording) stopRecording();
+      statusEl.textContent = 'Stopped.';
+    }
+    function startRecording() {
+      if (!state.mainHead || !state.mainHead.renderer) { recordStatus.textContent='Renderer not ready'; return; }
+      const canvas = document.querySelector('#scene-container canvas') || state.mainHead.renderer.domElement;
+      if(!canvas || canvas.width===0 || canvas.height===0) { recordStatus.textContent='Canvas not ready (0x0) — try again after scene loads'; return; }
+      const videoStream = canvas.captureStream(24);
+      let combined = videoStream;
+      try {
+        if(state.recordAudioDest) {
+          const aTracks = state.recordAudioDest.stream.getAudioTracks();
+          // If no audio tracks yet, the stream will get them when first speakAudio connects
+          combined = new MediaStream([...videoStream.getVideoTracks(), ...aTracks]);
+          // If still no audio tracks, keep video only and audio will be added on first speak (MediaRecorder will pick up new tracks? need to recreate, so just warn)
+          if(aTracks.length===0) console.warn('recordAudioDest has 0 tracks yet — audio will be added on first speak');
+        }
+      } catch(e) { console.warn('combine streams failed', e); combined = videoStream; }
+      if(combined.getVideoTracks().length===0) { recordStatus.textContent='captureStream no video tracks'; return; }
+      state.recordChunks = [];
+      const mimes = ['video/webm;codecs=vp9','video/webm;codecs=vp8','video/webm','video/mp4'];
+      let mime = mimes.find(m=>MediaRecorder.isTypeSupported(m));
+      if(!mime) { recordStatus.textContent='MediaRecorder mime unsupported'; return; }
+      try {
+        state.recorder = new MediaRecorder(combined, {mimeType: mime, videoBitsPerSecond: 8000000});
+      } catch(e) {
+        try { state.recorder = new MediaRecorder(combined); mime = state.recorder.mimeType; } catch(e2){ recordStatus.textContent='MediaRecorder failed '+e2.message; return; }
+      }
+      state.recorder.ondataavailable = e => { if(e.data && e.data.size>0) state.recordChunks.push(e.data); };
+      state.recorder.onstop = () => {
+        try { clearInterval(state._recordInterval); } catch(e){}
+        const blob = new Blob(state.recordChunks, {type: mime});
+        state.recordedBlob = blob;
+        if(state.downloadUrl) { try{ URL.revokeObjectURL(state.downloadUrl); }catch(e){} }
+        state.downloadUrl = URL.createObjectURL(blob);
+        const hasVideo = combined.getVideoTracks().length>0, hasAudio = combined.getAudioTracks().length>0;
+        recordStatus.textContent = `Ready to download: ${ (blob.size/1e6).toFixed(1)}MB ${mime.split('/')[1]} (${state.recordChunks.length} chunks) video:${hasVideo} audio:${hasAudio} — click Download Video`;
+        downloadBtn.disabled = false;
+        state.isRecording=false; recordBtn.textContent='● Record Video (fast)'; recordBtn.style.background='#dc2626';
+        statusEl.textContent='Recording finished — click Download Video to save';
+      };
+      // Keep renderer ticking while recording (placeholders have no animate)
+      state._recordInterval = setInterval(()=>{ try{ state.mainHead.renderer.render(state.mainHead.scene, state.mainHead.camera); }catch(e){} }, 1000/24);
+      try { state.recorder.start(100); } catch(e){ recordStatus.textContent='start failed '+e.message; clearInterval(state._recordInterval); return; }
+      state.isRecording=true; recordBtn.textContent='■ Stop Recording'; recordBtn.style.background='#991b1b';
+      recordStatus.textContent='Recording at 24fps (video+audio)...';
+      statusEl.textContent='Recording + playing...';
+    }
+    function stopRecording() {
+      if(state.recorder && state.isRecording){
+        try { state.recorder.requestData(); } catch(e){}
+        state.recorder.stop(); state.isRecording=false;
+        try { clearInterval(state._recordInterval); } catch(e){}
+      }
+    }
+    // The Audio/Diarization pickers, the Lip-sync select and the Anim select are
+    // gone: both inputs always came from the job on the server, and lip-sync is
+    // always 'auto' and animation always Full FBX.
+    document.getElementById('cameraMode').addEventListener('change', (e)=>{ state.cameraMode = e.target.value; console.log('cameraMode', state.cameraMode); if(state.cameraMode==='wide') frameAvatars(); });
+    // smooth toggle (?smooth=1)
+    const smoothToggle=document.getElementById('smoothToggle');
+    if(smoothToggle){
+      smoothToggle.checked = !!state.isSmooth;
+      smoothToggle.addEventListener('change', (e)=>{
+        const on=e.target.checked;
+        const url=new URL(location.href);
+        if(on) url.searchParams.set('smooth','1'); else url.searchParams.delete('smooth');
+        // keep job param
+        location.href=url.toString();
+      });
+    }
+    playBtn.addEventListener('click', playDialogue);
+    stopBtn.addEventListener('click', stopDialogue);
+    recordBtn.addEventListener('click', async () => {
+      if(state.isRecording){ stopRecording(); return; }
+      if(!state.audioBuffer || !state.diarization){ recordStatus.textContent='Load audio + JSON first'; return; }
+      // Clear previous download
+      if(state.downloadUrl){ try{ URL.revokeObjectURL(state.downloadUrl); }catch(e){} state.downloadUrl=null; state.recordedBlob=null; downloadBtn.disabled=true; }
+      startRecording();
+      await playDialogue();
+      // FIX: account for the intro sequence (item 4) so recording doesn't get cut off
+      // before the actual dialogue segments finish playing.
+      const total = computeIntroDelayMs() + state.diarization.segments[state.diarization.segments.length-1].end*1000+1500;
+      setTimeout(()=>{ if(state.isRecording) stopRecording(); }, total);
+    });
+    downloadBtn.addEventListener('click', () => {
+      if(!state.recordedBlob || !state.downloadUrl){ recordStatus.textContent='No recording yet — click Record first'; return; }
+      const a = document.createElement('a'); a.href=state.downloadUrl; a.download='dialogue_'+Date.now()+'.webm'; a.click();
+      recordStatus.textContent='Download started';
+    });
+    // Transparent hide/show pkz
+    const uiPanel=document.getElementById('ui-panel'), hideBtn=document.getElementById('hidePanelBtn'), toggleBtn=document.getElementById('togglePanelBtn');
+    function setPanelVisible(v){ uiPanel.classList.toggle('hidden', !v); toggleBtn.classList.toggle('show', !v); }
+    hideBtn.addEventListener('click', ()=> setPanelVisible(false));
+    toggleBtn.addEventListener('click', ()=> setPanelVisible(true));
+    document.addEventListener('keydown', (e)=>{ if(e.key.toLowerCase()==='k' && (e.ctrlKey||e.metaKey) && e.shiftKey){ e.preventDefault(); setPanelVisible(uiPanel.classList.contains('hidden')); } else if(e.key.toLowerCase()==='z' && e.ctrlKey && !e.shiftKey && !e.metaKey){ /* pkz alias */ } });
+    // pkz shortcut: press P+K+Z together or just 'k' with pkz hint - use 'p' then 'k' then 'z' sequence
+    let pkzBuf=''; document.addEventListener('keydown', (e)=>{ pkzBuf=(pkzBuf+e.key.toLowerCase()).slice(-3); if(pkzBuf==='pkz'){ setPanelVisible(uiPanel.classList.contains('hidden')); pkzBuf=''; } });
+    // autocapture via ?record=1
+    if(new URLSearchParams(location.search).has('record')){
+      const check = setInterval(()=>{ if(state.audioBuffer && state.diarization && !state.isRecording){ clearInterval(check); recordBtn.click(); } }, 500);
+    }
+    initScene().catch(err => { console.error('Init failed:', err); statusEl.textContent = 'Error: ' + err.message; loading.classList.add('hidden'); });
+  </script>
+</body>
+</html>
