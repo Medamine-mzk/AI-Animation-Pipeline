@@ -1,0 +1,9 @@
+# Frozen player builds kept for bisecting a playback regression. They are
+# verbatim copies of commits and are meant to be byte-identical to those blobs --
+# `git hash-object` is how that is checked. Without marking them binary, git's
+# autocrlf rewrites LF to CRLF on the next checkout, silently invalidating every
+# comparison made against them.
+tools/legacy/*.html -text -diff
+
+# Everything else keeps the platform default.
+* text=auto
