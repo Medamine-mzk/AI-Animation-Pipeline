@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
+<script>window.__playerBuild='2026-10-07-legacy-0917-viseme-1';console.log('[build] dialogue-player '+window.__playerBuild+' (legacy 2026-09-17 camera model + viseme fix; no gaze by design)');</script>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>TalkingHead Dialogue Player</title>
@@ -13,26 +14,10 @@
       position: absolute; top: 16px; left: 16px;
       background: rgba(0,0,0,0.35); backdrop-filter: blur(12px);
       padding: 16px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.15);
-      /* Was width:760px -- a fixed overlay that covered ~40% of the stage it
-         was meant to frame. It is now sized to its contents and collapses to a
-         single button, so watching the dialogue does not mean staring past a
-         wall of controls. */
-      width: 340px; max-width: calc(100vw - 32px);
-      max-height: calc(100vh - 32px); overflow-y: auto; z-index: 10;
-      display: flex; flex-direction: column; gap: 12px;
+      width: 760px; max-width: 90vw; max-height: calc(100vh - 32px); overflow-y: auto; z-index: 10;
+      display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
       transition: opacity 0.3s, transform 0.3s;
     }
-    #ui-panel .panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
-    #ui-panel .group { display: flex; flex-direction: column; gap: 6px; }
-    #ui-panel .group-title {
-      font-size: 10px; text-transform: uppercase; letter-spacing: .08em;
-      color: #64748b; border-bottom: 1px solid rgba(255,255,255,0.08); padding-bottom: 4px;
-    }
-    #ui-panel .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-    #ui-panel .hint { font-size: 10px; color: #94a3b8; line-height: 1.4; }
-    #ui-panel .check { display: flex; align-items: center; gap: 6px; margin: 0; }
-    #ui-panel #jobSource { color: #7dd3fc; }
-    #ui-panel #stageBoxSection { display: flex; flex-direction: column; gap: 4px; }
     #ui-panel.hidden { opacity: 0; pointer-events: none; transform: translateX(-20px); }
     #togglePanelBtn {
       position: absolute; top: 16px; left: 16px; z-index: 11;
@@ -42,30 +27,21 @@
       display: none;
     }
     #togglePanelBtn.show { display: block; }
-    #ui-panel .full { display: flex; flex-direction: column; }
+    #ui-panel h2 { grid-column: 1 / -1; }
+    #ui-panel .col { display: flex; flex-direction: column; }
+    #ui-panel .full { grid-column: 1 / -1; }
     #ui-panel::-webkit-scrollbar { width: 6px; }
     #ui-panel::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-    #ui-panel h2 { font-size: 15px; color: #7dd3fc; }
-    #ui-panel label { display: block; font-size: 11px; color: #94a3b8; margin: 0; }
-    #ui-panel select {
-      width: 100%; padding: 6px; border-radius: 6px;
-      background: #222; color: #fff; border: 1px solid #444;
-    }
+    #ui-panel h2 { font-size: 16px; margin-bottom: 12px; color: #7dd3fc; }
+    #ui-panel label { display: block; font-size: 12px; color: #aaa; margin: 10px 0 4px; }
+    #ui-panel input[type="file"] { width: 100%; color: #fff; font-size: 12px; }
     #ui-panel button {
-      width: 100%; margin-top: 0; padding: 9px;
+      width: 100%; margin-top: 14px; padding: 10px;
       background: #0ea5e9; color: #fff; border: none; border-radius: 6px;
       font-weight: 600; cursor: pointer; transition: background 0.2s;
     }
     #ui-panel button:hover { background: #0284c7; }
     #ui-panel button:disabled { background: #334155; cursor: not-allowed; }
-    /* The header's Hide button is a control, not a full-width action. */
-    #ui-panel .panel-head button {
-      width: auto; padding: 4px 10px; font-size: 11px; font-weight: 500;
-      background: rgba(255,255,255,0.15);
-    }
-    #ui-panel .panel-head button:hover { background: rgba(255,255,255,0.28); }
-    #ui-panel #drawBoxBtn { background: #22c55e; }
-    #ui-panel #drawBoxBtn:hover { background: #16a34a; }
     #status { margin-top: 10px; font-size: 12px; color: #86efac; min-height: 18px; }
     #subtitle-box {
       position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%);
@@ -106,100 +82,72 @@
   </script>
 </head>
 <body>
-  <button id="togglePanelBtn" title="Show controls">Controls</button>
+  <button id="togglePanelBtn" title="Show config (pkz)">⚙️ Config</button>
   <div id="scene-container"></div>
   <div class="loading-overlay" id="loading">
     <div class="spinner"></div>
     <div style="color:#888;font-size:14px;">Loading TalkingHead engine...</div>
   </div>
   <div id="ui-panel">
-    <div class="panel-head">
-      <h2 style="margin:0">Dialogue Player</h2>
-      <button id="hidePanelBtn" title="Hide panel">Hide</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;grid-column:1/-1">
+      <h2 style="margin:0">TalkingHead Dialogue Player</h2>
+      <button id="hidePanelBtn" style="width:auto;margin:0;padding:4px 10px;font-size:11px;background:rgba(255,255,255,0.15)">✕ Hide (pkz)</button>
     </div>
-
-    <!-- Which job is playing. The audio and the dialogue both come from the job
-         on the server, so there is nothing to pick here. -->
-    <div id="jobSource" class="hint">Loading…</div>
-
-    <div class="group">
-      <div class="group-title">Playback</div>
+    <div class="col">
+      <label>1. Audio File (MP3/WAV)</label>
+      <input type="file" id="audioInput" accept="audio/*" />
+      <label>2. Diarization JSON</label>
+      <input type="file" id="jsonInput" accept=".json" />
       <button id="playBtn" disabled>Play Dialogue</button>
       <button id="stopBtn" disabled>Stop</button>
-      <div class="row2">
-        <button id="recordBtn" disabled style="background:#dc2626">● Record</button>
-        <button id="downloadBtn" disabled style="background:#059669">⬇ Video</button>
-      </div>
-    </div>
-
-    <div class="group">
-      <div class="group-title">Look</div>
-      <label for="cameraMode">Camera</label>
-      <select id="cameraMode">
-        <option value="hybrid" selected>Hybrid — solo + two-shot</option>
-        <option value="solo">Solo — close-up per speaker</option>
-        <option value="wide">Wide — static group</option>
+      <button id="recordBtn" disabled style="background:#dc2626">● Record Video (fast)</button>
+      <button id="downloadBtn" disabled style="background:#059669">⬇ Download Video</button>
+      <label style="margin-top:10px">Lip-sync Mode</label>
+      <select id="lipsyncMode" style="width:100%;padding:6px;border-radius:6px;background:#222;color:#fff;border:1px solid #444">
+        <option value="auto" selected>Auto (viseme → jaw fallback) — hybrid</option>
+        <option value="viseme">Real Viseme only (RPM viseme_aa)</option>
+        <option value="jaw">Simple Jaw Pulse only (offline)</option>
       </select>
-      <label class="check" for="smoothToggle">
-        <input type="checkbox" id="smoothToggle"> Smooth camera
-      </label>
+      <label>Camera Mode</label>
+      <select id="cameraMode" style="width:100%;padding:6px;border-radius:6px;background:#222;color:#fff;border:1px solid #444">
+        <option value="hybrid" selected>Hybrid — solo close-up + 2-shot dad+girl trio</option>
+        <option value="solo">Solo only — close-up per speaker</option>
+        <option value="wide">Wide only — static frameAvatars</option>
+      </select>
+      <label>Anim Mode</label>
+      <select id="animMode" style="width:100%;padding:6px;border-radius:6px;background:#222;color:#fff;border:1px solid #444">
+        <option value="mood" selected>Mood only — fast, offline (A)</option>
+        <option value="fbx">Full FBX clip — 2s preload (B)</option>
+      </select>
     </div>
-
-    <div class="group">
-      <div class="group-title">Stage</div>
-      <!-- Was display:none, so the status bar demanded a step the panel would not
-           show. Drawing the box is optional; playback works without it. -->
-      <div id="stageBoxSection">
-        <button id="drawBoxBtn">⬜ Draw Stage Box</button>
-        <div class="hint">Click two corners on the floor — optional.</div>
+    <div class="col">
+      <div id="bgConfig" style="display:none">
+        <select id="bgSelect"></select>
+        <input id="bgScale" type="range" min="0.5" max="2.0" step="0.05" value="1.0"><span id="bgScaleVal"></span><button id="bgReset"></button>
+        <input id="bgPosX" type="range" min="-5" max="5" step="0.1" value="0"><input id="bgPosY" type="range" min="-5" max="5" step="0.1" value="0"><input id="bgPosZ" type="range" min="-5" max="5" step="0.1" value="0"><span id="bgPosVal"></span>
       </div>
+      <div style="display:none">
+        <input id="charSize" type="range" min="0.05" max="0.5" step="0.01" value="0.40">
+        <span id="charSizeVal">0.40</span>
+        <input id="feetSink" type="range" min="-0.20" max="0.05" step="0.01" value="0.00">
+        <span id="feetSinkVal">0.00</span>
+      </div>
+      <div id="stageBoxSection" style="display:none;background:rgba(34,197,94,0.12);padding:10px;border-radius:8px;margin-top:8px;border:1px solid rgba(34,197,94,0.3)">
+        <div style="font-size:11px;color:#86efac;margin-bottom:6px">🎬 Stage — Draw box where 4 will stand</div>
+        <button id="drawBoxBtn" style="width:100%;padding:8px;background:#22c55e;color:#fff;border:none;border-radius:6px;font-weight:600;cursor:pointer">⬜ Draw Stage Box (4 corners = 4 spots)</button>
+        <div style="font-size:9px;color:#888;margin-top:4px">Click first corner, then second corner — green box = stage</div>
+      </div>
+      <div id="camHud" style="margin-top:6px;font-size:10px;color:#888;white-space:pre-wrap"></div>
+      <button id="saveSpotsBtn" style="background:#475569;margin-top:8px">💾 Save Spots</button>
     </div>
-
     <div class="full">
-      <div id="status">Loading…</div>
+      <div id="status">Load audio + JSON to begin — Draw Stage Box first (required)</div>
       <div id="recordStatus" style="margin-top:4px;font-size:11px;color:#f87171;min-height:12px"></div>
-      <div class="hint" style="margin-top:6px">Zoom: wheel • Right-drag: pan • Drag avatar to move</div>
+      <div style="margin-top:6px;font-size:10px;color:#888">Zoom: wheel • Right-drag: pan • Drag avatar to move • Ghost red = furniture • Smooth 60fps</div>
     </div>
-
-    <!-- Kept in the DOM but hidden: applyBoxSpots() reads feetSink, and the
-         background controls are driven by picker_live, not by this panel. -->
-    <div style="display:none">
-      <select id="bgSelect"></select>
-      <input id="bgScale" type="range" min="0.5" max="2.0" step="0.05" value="1.0"><span id="bgScaleVal"></span><button id="bgReset"></button>
-      <input id="bgPosX" type="range" min="-5" max="5" step="0.1" value="0"><input id="bgPosY" type="range" min="-5" max="5" step="0.1" value="0"><input id="bgPosZ" type="range" min="-5" max="5" step="0.1" value="0"><span id="bgPosVal"></span>
-      <input id="charSize" type="range" min="0.05" max="0.5" step="0.01" value="0.40">
-      <span id="charSizeVal">0.40</span>
-      <input id="feetSink" type="range" min="-0.20" max="0.05" step="0.01" value="0.00">
-      <span id="feetSinkVal">0.00</span>
-      <div id="bgConfig"></div>
-    </div>
-    <!-- camHud is gone: a debug readout refreshed every 500ms with the camera
-         position and background scale, printed straight into the panel. -->
   </div>
   <div id="speaker-label"></div>
   <div id="subtitle-box"></div>
-  <!-- Shown when a job's dialogue does not belong to its own audio. Silent until
-       proven otherwise, and never used to hide a problem: it names the two
-       numbers so the mismatch is diagnosable from the screen. -->
-  <div id="consistency-warning" hidden
-       style="position:fixed;left:50%;transform:translateX(-50%);top:12px;z-index:200;
-              max-width:min(90vw,640px);background:rgba(120,20,20,0.94);color:#fee2e2;
-              border:1px solid #ef4444;border-radius:10px;padding:10px 14px;font-size:13px;
-              line-height:1.45;box-shadow:0 8px 30px rgba(0,0,0,0.5)"></div>
-  <script>
-    // Defined before the module script so it is available to loadDiarization()
-    // as well as to the playback loop. Kept tiny and defensive: a diagnostic
-    // that throws would take the player down with it.
-    window.showConsistencyWarning = function (message) {
-      try {
-        var el = document.getElementById('consistency-warning');
-        if (!el) return;
-        if (!message) { el.hidden = true; return; }
-        el.innerHTML = '<strong>Dialogue / audio mismatch</strong><br>' + message;
-        el.hidden = false;
-      } catch (e) { /* a banner is never worth breaking playback over */ }
-    };
-  </script>
   <div id="icon-overlay"><div class="pill"><img id="icon-img" src="" alt="" style="display:none"><span id="mood-emoji"></span></div></div>
   <script type="module">
     import * as THREE from 'three';
@@ -208,90 +156,49 @@
     import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
     import { DragControls } from 'three/addons/controls/DragControls.js';
     const BG_LIST = ["assets/background/horsleygate_hall-4k_fitted.glb"];
-    const isSmooth = new URLSearchParams(location.search).get('smooth')==='1';
-    const state = { mainHead: null, avatars: {}, audioBuffer: null, diarization: null, icons: [], iconDict: {}, isPlaying: false, scheduledTimeouts: [], recorder: null, recordChunks: [], isRecording: false, recordAudioDest: null, recordedBlob: null, downloadUrl: null,
-      // Fixed now that their pickers are gone: lip-sync is always the hybrid
-      // auto path, and animation is always Full FBX (every job's segments carry a
-      // clip, verified across all of them).
-      lipsyncMode: 'auto', cameraMode: 'hybrid', animMode: 'fbx', mixers: {}, walkMixers: {}, clipCache: new Map(), bgGroup: null, lastBox: null, bgCurrent: null, camTween: null, isSmooth };
+    const state = { mainHead: null, avatars: {}, audioBuffer: null, diarization: null, icons: [], iconDict: {}, isPlaying: false, scheduledTimeouts: [], recorder: null, recordChunks: [], isRecording: false, recordAudioDest: null, recordedBlob: null, downloadUrl: null, lipsyncMode: 'auto', cameraMode: 'hybrid', animMode: 'mood', mixers: {}, walkMixers: {}, clipCache: new Map(), bgGroup: null, lastBox: null, bgCurrent: null, camTween: null };
     function easeInOutCubic(x){ return x<0.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2; }
-    // Smooth spring (when ?smooth=1) - single writer, live head tracking, no stacked tweens
+    // --- Smooth camera: critically-damped spring (single camera writer during play) ---
+    // Replaces fixed-duration tweens. moveCameraTo() only sets goals; tickCameraTween()
+    // glides position + look-target toward them each frame using real dt (frame-rate
+    // independent). A new goal mid-glide just redirects the spring — no cuts, no re-easing.
     const camSpring = { look: new THREE.Vector3(0, 1.6, 0), init: false };
     function moveCameraTo(targetPos, targetLookAt, duration=550, opts={}){
       if(!state.mainHead) return;
-      if(state.isSmooth){
-        const cam=state.mainHead.camera;
-        if(!opts.force && state.camGoal && cam.position.distanceTo(targetPos)<0.03 && camSpring.look.distanceTo(targetLookAt)<0.03) return;
-        if(!state.camGoal) state.camGoal={ pos:new THREE.Vector3(), look:new THREE.Vector3() };
-        state.camGoal.pos.copy(targetPos); state.camGoal.look.copy(targetLookAt);
-        if(!camSpring.init){ camSpring.look.copy(targetLookAt); camSpring.init=true; }
-        if(duration>0 && !state.isPlaying) state._camGlideUntil = performance.now() + 1200;
-        if(duration===0 || opts.force){
-          const ctrl=state.mainHead.controls;
-          cam.position.copy(targetPos); camSpring.look.copy(targetLookAt);
-          cam.lookAt(targetLookAt);
-          if(ctrl){ ctrl.target.copy(targetLookAt); if(!state.isPlaying) ctrl.update(); }
-        }
-        return;
-      }
       const cam=state.mainHead.camera, ctrl=state.mainHead.controls;
-      const curTarget=ctrl ? ctrl.target.clone() : targetLookAt.clone();
-      if(!opts.force && cam.position.distanceTo(targetPos)<0.03 && curTarget.distanceTo(targetLookAt)<0.03) return;
-      // Generation guard. Every request supersedes the previous one, and a
-      // tween only writes while it is still the newest. Previously two camera
-      // requests 200ms apart each stored their own fromPos, so the older tween
-      // kept lerping the camera back toward a shot nobody wanted -- a move that
-      // was already cancelled still had its say, and the result was a camera
-      // pointing at empty space while the dialogue played on.
-      state.camTweenGen = (state.camTweenGen || 0) + 1;
-      state.camTween={gen:state.camTweenGen, fromPos:cam.position.clone(), toPos:targetPos.clone(), fromTarget:curTarget, toTarget:targetLookAt.clone(), start:performance.now(), dur:duration};
-      if(ctrl) ctrl.enabled=false;
+      if(!opts.force && state.camGoal && cam.position.distanceTo(targetPos)<0.03 && camSpring.look.distanceTo(targetLookAt)<0.03) return;
+      if(!state.camGoal) state.camGoal={ pos:new THREE.Vector3(), look:new THREE.Vector3() };
+      state.camGoal.pos.copy(targetPos); state.camGoal.look.copy(targetLookAt);
+      if(!camSpring.init){ camSpring.look.copy(targetLookAt); camSpring.init=true; }
+      if(duration>0 && !state.isPlaying) state._camGlideUntil = performance.now() + 1200; // brief glide for editing moves, then release to orbit
+      if(duration===0 || opts.force){
+        // Instant snap — used for editing / initial framing
+        cam.position.copy(targetPos); camSpring.look.copy(targetLookAt);
+        cam.lookAt(targetLookAt);
+        if(ctrl){ ctrl.target.copy(targetLookAt); if(!state.isPlaying) ctrl.update(); }
+      }
     }
     function tickCameraTween(dtMs){
-      if(state.isSmooth){
-        if(!state.mainHead || !state.camGoal) return;
-        if(!state.isPlaying && !(state._camGlideUntil && performance.now() < state._camGlideUntil)) return;
-        const cam=state.mainHead.camera, ctrl=state.mainHead.controls;
-        const dt=Math.min(0.1, Math.max(0.001, (dtMs||16.7)/1000));
-        let goalLook=state.camGoal.look;
-        if(state.isPlaying && state._activeSpeaker && state.avatars[state._activeSpeaker]){
-          const av=state.avatars[state._activeSpeaker];
-          if(av.armature && av.armature.visible){
-            goalLook=getHeadWorldPos(av); goalLook.y+=0.04;
-          }
-        }
-        const k=1-Math.exp(-5.5*dt);
-        cam.position.lerp(state.camGoal.pos, k);
-        camSpring.look.lerp(goalLook, k);
-        cam.lookAt(camSpring.look);
-        if(ctrl) ctrl.target.copy(camSpring.look);
-        return;
-      }
-      const tw=state.camTween;
-      if(!tw || !state.mainHead) return;
-      // Superseded by a newer request: hand the camera over rather than both
-      // writing to it, and re-enable controls the newer tween disabled.
-      if(tw.gen !== undefined && state.camTweenGen !== undefined && tw.gen !== state.camTweenGen){
-        state.camTween=null;
-        if(state.mainHead.controls) state.mainHead.controls.enabled=false;
-        return;
-      }
+      if(!state.mainHead || !state.camGoal) return;
+      // Spring only runs while playing, or briefly after an editing move — otherwise OrbitControls owns the camera
+      if(!state.isPlaying && !(state._camGlideUntil && performance.now() < state._camGlideUntil)) return;
       const cam=state.mainHead.camera, ctrl=state.mainHead.controls;
-      const u=Math.min(1, (performance.now()-tw.start)/tw.dur);
-      const e=easeInOutCubic(u);
-      cam.position.lerpVectors(tw.fromPos, tw.toPos, e);
-      const look=new THREE.Vector3().lerpVectors(tw.fromTarget, tw.toTarget, e);
-      cam.lookAt(look);
-      if(ctrl) ctrl.target.copy(look);
-      if(u>=1){ state.camTween=null; if(ctrl){ ctrl.enabled=true; ctrl.update(); } }
+      const dt=Math.min(0.1, Math.max(0.001, (dtMs||16.7)/1000));
+      // Live head tracking: keep the look goal glued to the active speaker's head bone
+      let goalLook=state.camGoal.look;
+      if(state.isPlaying && state._activeSpeaker && state.avatars[state._activeSpeaker]){
+        const av=state.avatars[state._activeSpeaker];
+        if(av.armature && av.armature.visible){
+          goalLook=getHeadWorldPos(av); goalLook.y+=0.04;
+        }
+      }
+      const k=1-Math.exp(-5.5*dt); // ~"smoothness": higher = snappier, lower = floatier
+      cam.position.lerp(state.camGoal.pos, k);
+      camSpring.look.lerp(goalLook, k);
+      cam.lookAt(camSpring.look);
+      if(ctrl) ctrl.target.copy(camSpring.look);
     }
     const container = document.getElementById('scene-container');
-    // Build stamp. Cached HTML made this unbearably hard to debug: the browser
-    // reported the bug still happening while it was running a build from before
-    // the fix, and the only way to tell was to compare a console log's format.
-    // This makes "which build am I running" a one-line question.
-    window.__playerBuild = '2026-10-07-camera-fit-viseme-1';
-    console.log('[build] dialogue-player ' + window.__playerBuild);
     const statusEl = document.getElementById('status');
     const playBtn = document.getElementById('playBtn');
     const stopBtn = document.getElementById('stopBtn');
@@ -444,42 +351,12 @@
         cameraView: 'full', cameraDistance: 1.2, cameraY: 0.4, cameraRotateEnable: true, cameraZoomEnable: true, cameraPanEnable: true,
         lightAmbientIntensity: 6, lightDirectIntensity: 80, lightDirectPhi: 0.1, lightDirectTheta: 1.2, lightSpotIntensity: 20, avatarMood: 'neutral',
         update: (dt) => {
-          // Surface animation failures instead of discarding them. These used to
-          // be swallowed by an empty catch, which is how a TypeError thrown on
-          // every single frame -- o.limit is not a function -- stayed invisible
-          // while lip-sync silently did nothing and the audio carried on.
-          // Throttled to one line per avatar per 2s so a persistent fault stays
-          // readable instead of flooding the console.
-          Object.entries(state.avatars).forEach(([id, av]) => {
-            try { av.animate(dt); }
-            catch (err) {
-              const now = performance.now();
-              if (av._lastAnimateError === undefined || now - av._lastAnimateError > 2000) {
-                av._lastAnimateError = now;
-                console.error(`[animate failed] ${id}:`, err);
-              }
-            }
-          });
-          // Listeners track whoever is speaking. updateGaze() is throttled
-          // internally; updateGazeBodies() must run every frame so the camera
-          // helpers cannot undo the body turn between ticks. Both are no-ops
-          // before playback and for single-speaker jobs.
-          // Date.now(), not dt: dt is a ~16ms delta and the throttle compares
-          // against a wall clock, so passing dt made every frame look throttled.
-          try { updateGaze(Date.now()); } catch(e){}
-          try { updateGazeBodies(); } catch(e){}
-          // Single owner of stage visibility, evaluated once per frame instead of
-          // from a scattering of timers and ad-hoc writes.
-          try { applyStageVisibility(); } catch(e){}
+          Object.values(state.avatars).forEach(av => { try{ av.animate(dt); }catch(e){} });
           Object.values(state.mixers).forEach(m=> { try{ m.update(dt*0.001); }catch(e){} });
           Object.values(state.walkMixers).forEach(m=> { try{ m.update(dt*0.001); }catch(e){} });
           // Follow walker camera dolly + icons
           try { if(state._walkFollow && state.isPlaying) updateWalkCamera(); } catch(e){}
           try { if(state.isPlaying && state._playStart) updateIcons(Date.now()/1000 - state._playStart); } catch(e){}
-          // Last word: run after every other step so nothing in this frame can
-          // undo it, and so a character that stops being renderable is reported
-          // in the same frame it happens.
-          try { stageWatchdog(); } catch(e){}
         }
       });
       // FIX: TalkingHead hardcodes a 10° FOV internally, meant to be paired with its
@@ -505,22 +382,15 @@
         const dts = dt / (state.mainHead.animSlowdownRate || 1);
         state.mainHead.animClock = (state.mainHead.animClock || 0) + dts;
         if(state.mainHead.opt && state.mainHead.opt.update) state.mainHead.opt.update(dts);
-        tickCameraTween(dt);
-        if(state.isSmooth){
-          // smooth spring owns camera during play, controls only when not playing
-          if(!state.isPlaying){
-            try { state.mainHead.controls?.update(); } catch(e){}
-          }
-        } else {
-          try { state.mainHead.controls?.update(); } catch(e){}
-        }
+        tickCameraTween(dt); // spring is the single camera writer while playing
+        if(!state.isPlaying) { try { state.mainHead.controls?.update(); } catch(e){} }
         try { state.mainHead.render(); } catch(e){}
       };
       _hostLoop(performance.now());
       // Background group (all 13) + live edit reuse mainHead.controls (best: orbit livesave)
       state.bgGroup = new THREE.Group(); state.mainHead.scene.add(state.bgGroup);
       const bgSelect = document.getElementById('bgSelect');
-      
+      const camHud = document.getElementById('camHud');
       BG_LIST.forEach(p=>{ const o=document.createElement('option'); o.value=p; o.textContent=p.split('/').pop(); bgSelect.appendChild(o); });
       function updateBackgroundBounds(){
         state.bgGroup.updateWorldMatrix(true,true);
@@ -543,6 +413,7 @@
           try { const saved=JSON.parse(localStorage.getItem('picker_live')); if(saved?.bgTransform?.scale) state.bgGroup.scale.set(saved.bgTransform.scale,saved.bgTransform.scale,saved.bgTransform.scale); } catch(e){}
           const box=new THREE.Box3().setFromObject(state.bgGroup);
           state.lastBox=box.clone();
+          try { camHud.textContent = `BG: ${url.split('/').pop()}  box x[${box.min.x.toFixed(1)},${box.max.x.toFixed(1)}] z[${box.min.z.toFixed(1)},${box.max.z.toFixed(1)}] scale ${state.bgGroup.scale.x.toFixed(2)}`; } catch(e){}
           state.bgCurrent=url;
         } catch(e){ console.warn('bg load fail', url, e.message); }
       }
@@ -552,8 +423,9 @@
         state.lastBox=new THREE.Box3(new THREE.Vector3(-20,0,-20), new THREE.Vector3(20,0.02,20));
         state.bgCurrent=null;
       } catch(e){}
-      bgSelect.addEventListener('change', async (e)=>{ await loadBackground(e.target.value); await loadOccupancy(e.target.value); await reflowSpotsForBG(); if(Object.keys(state.avatars).length){ Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x,0,p.z); }); frameAvatars(0,0,{force:true,allTime:true}); } saveSpotsLive(false); });
-      // The 500ms camera HUD interval is gone with the readout it filled.
+      bgSelect.addEventListener('change', async (e)=>{ await loadBackground(e.target.value); await loadOccupancy(e.target.value); await reflowSpotsForBG(); if(Object.keys(state.avatars).length){ Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x,0,p.z); }); frameAvatars(0,0,{force:true}); } saveSpotsLive(false); });
+      // HUD update per frame via host loop already (controls.update)
+      setInterval(()=>{ try { const c=state.mainHead.camera, t=state.mainHead.controls.target; camHud.textContent = `BG: ${(state.bgCurrent||'').split('/').pop()}  cam (${c.position.x.toFixed(2)},${c.position.y.toFixed(2)},${c.position.z.toFixed(2)}) target (${t.x.toFixed(2)},${t.y.toFixed(2)},${t.z.toFixed(2)}) fov ${c.fov}`; } catch(e){} }, 500);
       let _saveTimer=null;
       function getCurrentJobId(){
         try {
@@ -595,7 +467,7 @@
         const gg=window.getGroundY||getGroundY;
         Object.values(state.avatars).forEach(av=>{ if(av.armature){ let gy=0; try{ gy=gg(av.armature.position.x, av.armature.position.z); }catch(e){} av.armature.position.y=gy+s; if(av._slotPos) av._slotPos.y=gy+s; }});
         Object.keys(state.diarization?.speakers||{}).forEach(id=>{ if(state.diarization.speakers[id]){ const p=state.diarization.speakers[id]; let gy=0; try{ gy=gg(p.x,p.z); }catch(e){} p.y=+(gy+s).toFixed(3); }});
-        saveSpotsLive(false); frameAvatars(0,0,{force:true,allTime:true});
+        saveSpotsLive(false); frameAvatars(0,0,{force:true});
       }
       feetSink.addEventListener('input', (e)=>{ applyFeetSink(parseFloat(e.target.value)); });
       // BG Pos sliders (manual manipulation as requested)
@@ -679,7 +551,7 @@
           const p=state.diarization.speakers[id]?.position;
           if(p && av.armature){ av.armature.position.set(p.x, p.y, p.z); av.armature.updateMatrixWorld(true); }
         });
-        frameAvatars(0,0,{force:true,allTime:true}); saveSpotsLive(false);
+        frameAvatars(0,0,{force:true}); saveSpotsLive(false);
       }
       async function reflowSpotsForBG(){
         if(!state.diarization || !state.lastBox) return;
@@ -729,10 +601,7 @@
             }
             const near=isNearFurniture(x,z);
             e.object.traverse(o=>{ if(o.isMesh && o.material && o.material.emissive){ o.material.emissive.set(near ? 0x330000 : 0x000000); }});
-            // Plain word, not U+26A0 U+FE0F: the emoji variation selector asks for an
-    // emoji font that `font-family: system-ui` does not provide, so the warning
-    // rendered as an empty box -- an error sign that could not be read.
-    if(near) statusEl.textContent='Warning: near furniture - move to clear floor';
+            if(near) statusEl.textContent='⚠️ Near furniture — move to clear floor';
           });
           dragControls.addEventListener('dragend', (e)=>{
             if(state.mainHead.controls) state.mainHead.controls.enabled=true;
@@ -789,8 +658,8 @@
             // Load avatars after box if needed
             (async()=>{
               if(!Object.keys(state.avatars).length && state.diarization?.speakers){
-                try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=true; if(state._setupDrag) state._setupDrag(); const s=parseFloat(document.getElementById('charSize')?.value||0.5); Object.values(state.avatars).forEach(av=> av.armature && av.armature.scale.setScalar(s)); frameAvatars(0,0,{force:true,allTime:true}); } catch(e){}
-              } else { Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x, p.y, p.z); const s2=parseFloat(document.getElementById('charSize')?.value||0.5); if(av.armature) av.armature.scale.setScalar(s2); }); frameAvatars(0,0,{force:true,allTime:true}); }
+                try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=true; if(state._setupDrag) state._setupDrag(); const s=parseFloat(document.getElementById('charSize')?.value||0.5); Object.values(state.avatars).forEach(av=> av.armature && av.armature.scale.setScalar(s)); frameAvatars(0,0,{force:true}); } catch(e){}
+              } else { Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x, p.y, p.z); const s2=parseFloat(document.getElementById('charSize')?.value||0.5); if(av.armature) av.armature.scale.setScalar(s2); }); frameAvatars(0,0,{force:true}); }
               state._boxReady=true; const cb=document.getElementById('confirmSpotsBtn'); cb.disabled=false; cb.style.opacity=1;
             })();
           } else { statusEl.textContent='Box too small — pick larger corners'; }
@@ -821,8 +690,8 @@
           updateStageBoxHelper(); applyBoxSpots();
           statusEl.textContent='Stage Box set — 4 corners are 4 spots';
           if(!Object.keys(state.avatars).length && state.diarization?.speakers){
-            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=true; if(state._setupDrag) state._setupDrag(); const s=parseFloat(document.getElementById('charSize')?.value||0.5); Object.values(state.avatars).forEach(av=> av.armature && av.armature.scale.setScalar(s)); frameAvatars(0,0,{force:true,allTime:true}); } catch(e){}
-          } else { Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x, p.y, p.z); const s2=parseFloat(document.getElementById('charSize')?.value||0.5); if(av.armature) av.armature.scale.setScalar(s2); }); frameAvatars(0,0,{force:true,allTime:true}); }
+            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=true; if(state._setupDrag) state._setupDrag(); const s=parseFloat(document.getElementById('charSize')?.value||0.5); Object.values(state.avatars).forEach(av=> av.armature && av.armature.scale.setScalar(s)); frameAvatars(0,0,{force:true}); } catch(e){}
+          } else { Object.entries(state.avatars).forEach(([id,av])=>{ const p=state.diarization.speakers[id]?.position; if(p) av.armature.position.set(p.x, p.y, p.z); const s2=parseFloat(document.getElementById('charSize')?.value||0.5); if(av.armature) av.armature.scale.setScalar(s2); }); frameAvatars(0,0,{force:true}); }
           state._boxReady=true; const cb=document.getElementById('confirmSpotsBtn'); cb.disabled=false; cb.style.opacity=1;
           state.boxDrawMode=false; boxStart=null; if(state.mainHead.controls) state.mainHead.controls.enabled=true;
           try{ if(dragControls) dragControls.enabled=true; }catch(e){}
@@ -843,9 +712,17 @@
       // (No +Add beyond box corners; palette hidden)
       // (ghost +Add disabled)
       state._setupDrag=setupDrag;
-      // The Save Spots button is gone: saveSpotsLive() already re-persists every
-      // position to localStorage about every 400ms, so dragging an avatar is
-      // saved continuously. What the button added was a manual JSON download.
+      document.getElementById('saveSpotsBtn').addEventListener('click', ()=>{
+        saveSpotsLive(true);
+        setTimeout(()=>{
+          try {
+            const payload=JSON.parse(localStorage.getItem('picker_live'));
+            const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
+            const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='picker_live.json'; a.click();
+          } catch(e){}
+          statusEl.textContent='Spots saved — picker_live.json downloaded';
+        }, 450);
+      });
       try { state.mainHead.scene.background = new THREE.Color(0x87ceeb); } catch(e){}
       try { state.mainHead.renderer.setClearColor(0x87ceeb, 1); } catch(e){}
       try { state.mainHead.scene.fog = new THREE.Fog(0x87ceeb, 8, 20); } catch(e){}
@@ -859,28 +736,10 @@
         state.lastBox=new THREE.Box3(new THREE.Vector3(-3,0,-3), new THREE.Vector3(3,0.02,3));
       } catch(e){}
       loading.classList.add('hidden');
-      statusEl.textContent = 'Scene ready.';
+      statusEl.textContent = 'Scene ready. Load audio + JSON.';
       // Defer avatar load until after user gesture to avoid AudioContext autoplay block (4x warnings)
       // Auto-load dialogue JSON only, not avatars — avatars will load on first Play click
       state.prePlayEditing=true;
-      // Ask the server whether this job's dialogue belongs to its own audio. Four
-      // jobs here carry a dialogue written for a longer recording, and until this
-      // existed the only symptom was hearing your own audio under somebody else's
-      // words. The server measures the real WAV duration, so this cannot drift.
-      async function checkJobConsistency(jobId) {
-        try {
-          const r = await fetch(`/api/jobs/${encodeURIComponent(jobId)}?t=${Date.now()}`,
-                               { cache: 'no-store' });
-          if (!r.ok) return;
-          const c = (await r.json()).consistency;
-          if (c && c.ok === false) {
-            window.showConsistencyWarning(
-              c.reason + ' Playback will stop when the audio ends.');
-            console.warn('[consistency]', c);
-          }
-        } catch (e) { /* never block playback on a diagnostic */ }
-      }
-
       function mergePickerLive(){
         try {
           const jid=getCurrentJobId();
@@ -918,21 +777,9 @@
             if(state.bgGroup && saved.bgTransform.scale) state.bgGroup.scale.setScalar(saved.bgTransform.scale);
             if(saved.bgTransform.position) state.bgGroup.position.fromArray(saved.bgTransform.position);
           }
-          // Don't restore sky cameras (y>2.35) — hybrid will frame correctly.
-          //
-          // A height check was never enough. A camera at y=1.83 is not a sky
-          // camera, so it passed, and it was restored verbatim — while being
-          // physically unable to see its own stage: at fov 42 the frustum at the
-          // near (back) row of spots covers only y 1.01..1.74, i.e. the top 0.73
-          // of a ~1.75 character, so that whole row rendered as a floating head
-          // or not at all. Nobody appeared "hidden"; the camera simply was not
-          // pointed at them. So the restored camera is now verified against the
-          // actual stage and discarded if it fails.
+          // Don't restore sky camera (y>2.35) — hybrid will frame correctly
           if(saved.camera && state.mainHead && saved.camera.position && saved.camera.position.y < 2.3){
             try{ state.mainHead.camera.position.copy(saved.camera.position); state.mainHead.controls.target.copy(saved.camera.target); if(saved.fov) state.mainHead.camera.fov=saved.fov; state.mainHead.camera.updateProjectionMatrix(); }catch(e){}
-            // Avatars may not be loaded yet on the init call; ensureStageFramed
-            // returns false and we retry once they are (see ensureStageFramedLater).
-            if(!ensureStageFramed('restored')) ensureStageFramedLater();
           }
           console.log('[merge] picker_live 1.119 merged, bg', saved.background, 'scale', saved.bgTransform?.scale);
         } catch(e){ console.warn('[merge] fail', e); }
@@ -941,26 +788,22 @@
       try {
         const urlJob=(new URLSearchParams(location.search)).get('job');
         const wavJob=localStorage.getItem('wav_job_id');
-        const bust = Date.now();
         // priority: explicit ?job= -> wav_job_id -> dialogue_override (manual) -> default
-        // Use cache bust + no-store so avatar selected in config.html is used on hard refresh
-          if (urlJob) {
-            try { const r=await fetch(`jobs/${urlJob}/dialogue.json?t=${bust}`, {cache:'no-store'}); if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${urlJob}/dialogue.json via ?job= with ${Object.keys(state.diarization.speakers||{}).length} speakers`); } } catch(e){}
-            await checkJobConsistency(urlJob);
-          }
-          if (!state.diarization && wavJob) {
-            try { const r=await fetch(`jobs/${wavJob}/dialogue.json?t=${bust}`, {cache:'no-store'}); if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${wavJob}/dialogue.json via wav_job_id`); } } catch(e){}
-            await checkJobConsistency(wavJob);
-          }
+        if (urlJob) {
+          try { const r=await fetch(`jobs/${urlJob}/dialogue.json`); if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${urlJob}/dialogue.json via ?job=`); } } catch(e){}
+        }
+        if (!state.diarization && wavJob) {
+          try { const r=await fetch(`jobs/${wavJob}/dialogue.json`); if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${wavJob}/dialogue.json via wav_job_id`); } } catch(e){}
+        }
         if (!state.diarization) {
           const over=localStorage.getItem('dialogue_override');
           if(over){ try{ state.diarization=JSON.parse(over); console.log('[config] loaded dialogue_override from config page'); }catch(e){} }
         }
         if(!state.diarization){
           const fallbackId=urlJob || wavJob || 'default';
-          const r=await fetch(`jobs/${fallbackId}/dialogue.json?t=${bust}`, {cache:'no-store'});
+          const r=await fetch(`jobs/${fallbackId}/dialogue.json`);
           if(r.ok){ state.diarization=await r.json(); console.log(`[job] loaded jobs/${fallbackId}/dialogue.json fallback`); }
-          else { const r2=await fetch(`jobs/dialogue.json?t=${bust}`, {cache:'no-store'}); if(r2.ok){ state.diarization=await r2.json(); console.log('[job] loaded jobs/dialogue.json ultimate fallback'); } }
+          else { const r2=await fetch('jobs/dialogue.json'); if(r2.ok){ state.diarization=await r2.json(); console.log('[job] loaded jobs/dialogue.json ultimate fallback'); } }
         }
         if(!state.diarization){
           const tried = urlJob || wavJob || 'default';
@@ -1002,12 +845,11 @@
           }
           } // end else keep 1.119
         } catch(e){}
-        // Counted, never hardcoded to 4: this block also runs for the default dialogue.
-        const _n = Object.keys(state.diarization.speakers).length;
-        statusEl.textContent=`Auto-loaded dialogue.json (${_n} speaker${_n===1?'':'s'}) — loading avatars`; checkReady();
+        statusEl.textContent=`Auto-loaded dialogue.json (${Object.keys(state.diarization.speakers).length} speakers) — auto-loading 4 at 0.3 size, feet 0.00`; checkReady();
+        // Auto-load avatars with fixed 0.3 and 0.00 (no confirm needed)
         setTimeout(async ()=>{
           if(!Object.keys(state.avatars).length && state.diarization?.speakers){
-            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=false; try { applyPresentVisibility(0); frameAvatars(0,0,{force:true,allTime:true}); if(state._setupDrag) state._setupDrag(); } catch(e){} checkReady(); const _m = Object.keys(state.avatars).length; const _ready = !playBtn.disabled; if(_ready) statusEl.textContent=`${_m} avatar${_m===1?'':'s'} ready — Play enabled`; } catch(e){}
+            try { await loadAvatars(state.diarization.speakers); state.prePlayEditing=false; try { applyPresentVisibility(0); frameAvatars(0,0,{force:true}); if(state._setupDrag) state._setupDrag(); } catch(e){} checkReady(); statusEl.textContent='4 avatars ready — Play enabled (size 0.3 feet 0.00)'; } catch(e){}
           }
         }, 600);
       } catch(e) {}
@@ -1015,331 +857,63 @@
       try {
         const urlJob=new URLSearchParams(location.search).get('job');
         const jobId=urlJob || localStorage.getItem('wav_job_id') || 'default';
-// With no ?job=, `localStorage.getItem('wav_job_id')` may name a job that no
-  // longer exists, and the old code silently fell through to a raw file path
-  // that also 404s -- leaving a visitor with no audio and no explanation. Fall
-  // back to the served default dialogue's own audio instead.
-  const ar = await fetch(`jobs/${jobId}/audio.wav?t=${Date.now()}`, {cache:'no-store'});
-  if(ar.ok){
-    _pendingAudioArrayBuffer = await ar.arrayBuffer();
-    statusEl.textContent=`Auto-fetched audio ${(_pendingAudioArrayBuffer.byteLength/1e6).toFixed(1)}MB — Play ready`
-    checkReady();
-  } else {
-// The served default dialogue carries no audio field, so there is nothing to
-    // pair it with. Record that, because the avatar-ready message is written
-    // 600ms later and would otherwise claim "Play enabled" while Play stays
-    // disabled -- a status line contradicting the button beside it.
-    try { localStorage.removeItem('wav_job_id'); } catch(e) {}
-    state._noAudio = true;
-    checkReady();
-  }
+        const ar = await fetch(`jobs/${jobId}/audio.wav`);
+        if(ar.ok){
+          _pendingAudioArrayBuffer = await ar.arrayBuffer();
+          statusEl.textContent=`Auto-fetched audio ${(_pendingAudioArrayBuffer.byteLength/1e6).toFixed(1)}MB — Play ready`;
+          checkReady();
+        } else {
+          const ar2 = await fetch('jobs/full_mono_london.wav');
+          if(ar2.ok){
+            _pendingAudioArrayBuffer = await ar2.arrayBuffer();
+            statusEl.textContent=`Auto-fetched audio ${(_pendingAudioArrayBuffer.byteLength/1e6).toFixed(1)}MB — Play ready`;
+            checkReady();
+          }
+        }
       } catch(e) { console.warn('auto audio fetch failed', e); }
       state._pendingAudioArrayBuffer=_pendingAudioArrayBuffer;
       state._boxReady=true;
-      // "Confirm Spots" is created hidden and only revealed while drawing a stage box.
-      // It was appended straight to #ui-panel, which is why it appeared as a
-      // stray full-width button at the bottom of the controls; it now lives in
-      // the Stage group beside Draw Stage Box.
-      const confirmBtn=document.createElement('button'); confirmBtn.id='confirmSpotsBtn'; confirmBtn.textContent='✓ Confirm Spots → Play'; confirmBtn.style.cssText='display:none;margin-top:4px';
-      (document.getElementById('stageBoxSection') || document.getElementById('ui-panel')).appendChild(confirmBtn);
-       // Auto-load icons per-job (not golden) - each job has specific icons
-        try {
-          const jid = getCurrentJobId();
-          let ir = null;
-          // try per-job first - bust cache so newly generated icons after avatar change show
-          try { ir = await fetch(`jobs/${jid}/icons.json?t=${Date.now()}`, {cache:'no-store'}); } catch(e){}
-          if(ir && ir.ok){
-            state.icons = await ir.json(); console.log(`icons loaded ${state.icons.length} for job ${jid}`);
-          } else {
-            // for non-golden jobs, don't reuse London icons - generate from transcript or empty
-            // try golden only if this is actually a golden/default job
-            if (jid === 'golden' || jid === 'default') {
-              let gr = await fetch(`jobs/golden/icons.json?t=${Date.now()}`, {cache:'no-store'});
-              if(!gr.ok) gr = await fetch(`jobs/icons.json?t=${Date.now()}`, {cache:'no-store'});
-              if(gr && gr.ok){ state.icons = await gr.json(); console.log(`icons loaded ${state.icons.length} golden fallback`); }
-              else { state.icons = []; console.log('no icons for job '+jid+' - empty'); }
-            } else {
-              // generate minimal icons from transcript words using dictionary if available
-              state.icons = [];
-              console.log('no per-job icons for '+jid+' - using empty (will show no London icons)');
-            }
-          }
-          const dr = await fetch(`tools/icons/dictionary.json?t=${Date.now()}`, {cache:'no-store'});
-          if(dr.ok) state.iconDict = await dr.json();
-          state.pixabayIndex = {};
+      const confirmBtn=document.createElement('button'); confirmBtn.id='confirmSpotsBtn'; confirmBtn.textContent='✓ Confirm Spots → Play'; confirmBtn.style.cssText='display:none';
+      document.getElementById('ui-panel').appendChild(confirmBtn);
+      // Auto-load icons per-job (not golden) - each job has specific icons
+       try {
+         const jid = getCurrentJobId();
+         let ir = null;
+         // try per-job first
+         try { ir = await fetch(`jobs/${jid}/icons.json`); } catch(e){}
+         if(ir && ir.ok){
+           state.icons = await ir.json(); console.log(`icons loaded ${state.icons.length} for job ${jid}`);
+         } else {
+           // for non-golden jobs, don't reuse London icons - generate from transcript or empty
+           // try golden only if this is actually a golden/default job
+           if (jid === 'golden' || jid === 'default') {
+             let gr = await fetch('jobs/golden/icons.json');
+             if(!gr.ok) gr = await fetch('jobs/icons.json');
+             if(gr && gr.ok){ state.icons = await gr.json(); console.log(`icons loaded ${state.icons.length} golden fallback`); }
+             else { state.icons = []; console.log('no icons for job '+jid+' - empty'); }
+           } else {
+             // generate minimal icons from transcript words using dictionary if available
+             state.icons = [];
+             console.log('no per-job icons for '+jid+' - using empty (will show no London icons)');
+           }
+         }
+         const dr = await fetch('tools/icons/dictionary.json');
+         if(dr.ok) state.iconDict = await dr.json();
+         state.pixabayIndex = {};
        } catch(e) { console.warn('icons load failed', e); state.icons=[]; }
     }
-      // Cache keyed on the diarization object itself: it is replaced wholesale on
-      // every load, so identity is a safe invalidation signal, and this runs
-      // inside the camera frame loop.
-      let _firstLineCache = { key: null, map: new Map() };
-      function firstLineMap() {
-        const d = state.diarization;
-        if (_firstLineCache.key === d) return _firstLineCache.map;
-        const map = new Map();
-        for (const s of (d?.segments || [])) {
-          const sid = s?.speaker, t = s?.start;
-          if (sid == null || typeof t !== 'number') continue;
-          const cur = map.get(sid);
-          if (cur === undefined || t < cur) map.set(sid, t);
-        }
-        _firstLineCache = { key: d, map };
-        return map;
-      }
       function isPresent(sid, t) {
-        if(state.prePlayEditing) return true;
-        const order = state.diarization?.entranceOrder || [];
-        const walkins = state.diarization?.walkins || [];
-        // The entrance schedule is DERIVED data; the dialogue is the source of
-        // truth. It used to be trusted absolutely (`t >= walkin.t0`), so a stale
-        // schedule silently removed a character from the stage: job ce2f201a
-        // kept 2-speaker entrances after becoming a 4-speaker job, which left
-        // the mom's walk-in at 30.07s while her first line was at 8.64s -- she
-        // was invisible through her own dialogue and only appeared once the dad
-        // started talking at 32s. A speaker must therefore be on stage no later
-        // than their own first line, whatever the schedule claims.
-        const firstLine = firstLineMap().get(sid);
-        let t0;
-        if (order.length && order[0] === sid) {
-          t0 = 0;                                  // first on stage, already there
-        } else {
-          const wk = walkins.find(w => w.speaker === sid);
-          if (wk) t0 = wk.t0;
-          else if (firstLine !== undefined) t0 = firstLine;  // no entrance: appear on their first line
-          else return true;                        // nothing says otherwise
-        }
-        if (firstLine !== undefined && t0 > firstLine) t0 = firstLine;
-        return t >= t0 - 1e-6;
-      }
-      // Read-only introspection, so "is this character on stage?" can be checked
-      // in a real browser instead of inferred from the JSON. Returns exactly what
-      // applyPresentVisibility() would use; it changes nothing.
-      window.dialoguePresenceAt = function(t){
-        const out = {};
-        for (const id of Object.keys(state.avatars || {})) out[id] = isPresent(id, t);
-        return out;
-      };
-      // The fixed animation/lip-sync settings, so "always Full FBX" and "always
-      // auto" can be asserted rather than assumed.
-      window.dialogueModes = function(){
-        return { animMode: state.animMode, lipsyncMode: state.lipsyncMode || 'auto',
-                 cameraMode: state.cameraMode, smooth: !!state.isSmooth };
-      };
-      // Measured gaze state, so "everyone looks at the speaker" can be checked
-      // instead of inferred. needYaw is the world yaw from a character's head to
-      // the speaker's head; facingYaw is where its body actually points. Both
-      // are world-space, because the body may sit under a rotated parent.
-      window.dialogueGaze = function(t){
-        const spk = activeSpeakerAt(t);
-        const spkHead = spk && state.avatars[spk] ? getHeadWorldPos(state.avatars[spk]) : null;
-        const rows = Object.entries(state.avatars).map(([id, av]) => {
-          const head = getHeadWorldPos(av);
-          const tgt = av.speakTo;
-          const hasTarget = !!(tgt && typeof tgt.x === 'number');
-          const targetAtHeadHeight = hasTarget ? tgt.y > 0.25 : null;
-          let needYaw = null, facingYaw = null, offByDeg = null, facesSpeaker = null;
-          if (spkHead && id !== spk) {
-            needYaw = +(Math.atan2(spkHead.x - head.x, spkHead.z - head.z) * 180 / Math.PI).toFixed(1);
-            try {
-              const d = new THREE.Vector3();
-              av.armature.getWorldDirection(d);
-              facingYaw = +(Math.atan2(d.x, d.z) * 180 / Math.PI).toFixed(1);
-            } catch(e){}
-            if (facingYaw !== null) {
-              let diff = Math.abs(needYaw - facingYaw) % 360;
-              if (diff > 180) diff = 360 - diff;
-              offByDeg = +diff.toFixed(1);
-              facesSpeaker = diff < 34;
-            }
-          }
-          return { id, isSpeaker: id === spk, hasTarget, targetAtHeadHeight,
-                   needYaw, facingYaw, offByDeg, facesSpeaker,
-                   stageVisible: !!av._stageVisible,
-                   meshVisible: !!(av.armature && av.armature.visible) };
-        });
-        return { speaker: spk, rows };
-      };
-      window.dialogueGazeWhy = function(id){
-        const t = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
-        return { present: isPresent(id, t), walking: isWalking(id, t),
-                 isSpeaker: id === activeSpeakerAt(t),
-                 eligible: isPresent(id, t) && !isWalking(id, t) && id !== activeSpeakerAt(t) };
-      };
-      // Live avatar handles. A function, not a value: loadAvatars() REASSIGNS
-      // state.avatars, so a captured reference went stale and read as empty --
-      // which made a measurement silently prove nothing.
-      window.__stageAvatars = function(){ return state.avatars; };
-      window.__measureAvatarHeight = function(id){
-        const av = state.avatars[id];
-        return av ? measureAvatarHeight(av) : 0;
-      };
-      // Camera + head positions, so framing can be measured as geometry rather
-      // than eyeballed in a screenshot.
-      window.__camera = function(){
-        const c = state.mainHead && state.mainHead.camera;
-        return c ? { x: c.position.x, y: c.position.y, z: c.position.z, fov: c.fov } : null;
-      };
-      window.__cameraHandle = function(){ return (state.mainHead && state.mainHead.camera) || null; };
-      window.__headWorld = function(id){
-        const av = state.avatars[id];
-        return av ? getHeadWorldPos(av) : null;
-      };
-      // Project a character's bounding box into normalised device coordinates.
-      // This is the direct test of "is the whole character in shot": NDC runs
-      // -1..1, so anything beyond +/-1 is outside the frustum and therefore not
-      // rendered -- which is what "the body disappeared" actually was.
-      window.__avatarNdc = function(id){
-        const av = state.avatars[id];
-        const cam = state.mainHead && state.mainHead.camera;
-        if (!av || !av.armature || !cam) return null;
-        let box;
-        try { box = new THREE.Box3().setFromObject(av.armature); } catch(e){ return null; }
-        if (!isFinite(box.min.x) || !isFinite(box.max.x)) return null;
-        cam.updateMatrixWorld(true);
-        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-        const v = new THREE.Vector3();
-        for (let i = 0; i < 8; i++) {
-          v.set(i & 1 ? box.max.x : box.min.x,
-                i & 2 ? box.max.y : box.min.y,
-                i & 4 ? box.max.z : box.min.z);
-          v.project(cam);
-          minX = Math.min(minX, v.x); maxX = Math.max(maxX, v.x);
-          minY = Math.min(minY, v.y); maxY = Math.max(maxY, v.y);
-        }
-        return { minX, maxX, minY, maxY,
-                 fullyIn: minX >= -1 && maxX <= 1 && minY >= -1 && maxY <= 1 };
-      };
-      // Can the current camera actually see its own cast?
-      //
-      // Returns the characters that are NOT fully in shot, plus a one-line reason.
-      // "Fully in shot" means the whole bounding box projects inside NDC -1..1,
-      // i.e. the character is rendered end to end rather than sliced by the
-      // frustum. A character can be perfectly visible according to
-      // applyStageVisibility() and still be invisible because the camera is
-      // pointing somewhere else entirely; those are different failures and this
-      // only measures the second one.
-      window.__castOutsideCamera = function(){
-        const ids = Object.keys(state.avatars || {});
-        if (!ids.length || !state.mainHead) return null;   // nothing to judge yet
-        const out = [];
-        for (const id of ids) {
-          const n = window.__avatarNdc(id);
-          if (!n) continue;
-          if (!n.fullyIn) {
-            const side = n.maxX > 1 ? 'right' : n.minX < -1 ? 'left' : '';
-            const vert = n.maxY > 1 ? 'head cut off' : n.minY < -1 ? 'body cut off' : '';
-            out.push({ id, minX: n.minX, maxX: n.maxX, minY: n.minY, maxY: n.maxY,
-                       why: [side && 'cropped ' + side, vert].filter(Boolean).join(', ') });
-          }
-        }
-        return out;
-      };
-      // If the camera cannot see the cast, reframe. Called after any restore of a
-      // saved camera, because a saved camera is the one input we never verify.
-      function ensureStageFramed(reason) {
-        const out = window.__castOutsideCamera();
-        if (!out) return false;               // avatars not loaded yet; caller retries later
-        if (!out.length) return true;
-        const names = out.map(o => o.id).join(', ');
-        const why = out[0].why || 'outside frustum';
-        console.warn(`[cam] saved camera (${reason}) cannot see ${names} - ${why}; reframing`);
-        try { frameAvatars(0, 0, { force: true, allTime: true }); } catch(e) {}
-        return false;
-      }
-      window.ensureStageFramed = ensureStageFramed;
-      // Live camera state, for diagnosing "the screen is empty" without guessing.
-      window.__stageCam = function(){
-        const c = state.mainHead && state.mainHead.camera;
-        if (!c) return null;
-        const t = state.mainHead.controls ? state.mainHead.controls.target : null;
-        return { pos: c.position.toArray().map(n=>+n.toFixed(3)),
-                 target: t ? t.toArray().map(n=>+n.toFixed(3)) : null,
-                 fov: c.fov, aspect: +(c.aspect||0).toFixed(3),
-                 tweening: !!state.camTween, mode: state.cameraMode,
-                 charH: Object.fromEntries(Object.entries(state.avatars).map(([id,a])=>[id, +(measureAvatarHeight(a)||0).toFixed(3)])) };
-      };
-      // Stage watchdog: prove that every character which SHOULD be on stage is
-      // actually renderable, and describe the moment one is not.
-      //
-      // Added because static reasoning kept failing here. There is exactly one
-      // writer of .visible (applyStageVisibility, below) and isPresent() is
-      // monotonic, so the cast "cannot" blink -- yet in a real browser every
-      // character disappears at once while the camera stays put. Two global
-      // faults produce exactly that, and both are visible in one log line:
-      //
-      //   * the playback clock jumping backwards or being cleared, since every
-      //     presence test reads Date.now()/1000 - _playStart; and
-      //   * state.avatars being rebuilt, since loadAvatars() empties the map and
-      //     disposes the old armatures, removing the whole cast in one tick.
-      //
-      // Debounced to one line per 2s per character so a single playthrough stays
-      // readable instead of flooding the console.
-      const _wd = { id: null, lastNow: null, mute: {}, events: 0 };
-      function stageWatchdog() {
-        try {
-          const now = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
-          // Clock health: playback time must never go backwards.
-          let clockBack = false;
-          if (_wd.lastNow !== null && now < _wd.lastNow - 0.05) clockBack = true;
-          _wd.lastNow = now;
-          // Cast identity: a rebuild shows up as a changed object.
-          if (_wd.id === null) _wd.id = state.avatars;
-          const rebuilt = _wd.id !== state.avatars;
-          if (rebuilt) _wd.id = state.avatars;
-          const cam = state.mainHead ? state.mainHead.camera : null;
-          const camP = cam ? cam.position.toArray().map(n=>+n.toFixed(2)) : null;
-          const camT = state.mainHead && state.mainHead.controls
-            ? state.mainHead.controls.target.toArray().map(n=>+n.toFixed(2)) : null;
-          for (const [id, av] of Object.entries(state.avatars || {})) {
-            if (!av || !av.armature) continue;
-            const want = shouldBeVisible(id, now);
-            if (!want) continue;                       // correctly off stage: not a failure
-            const bad = [];
-            if (av.armature.visible !== true) bad.push('armatureHidden');
-            if (!av.armature.parent) bad.push('removedFromScene');
-            let box = null;
-            try { box = new THREE.Box3().setFromObject(av.armature); } catch(e){}
-            if (!box || !isFinite(box.min.x) || !isFinite(box.max.x)) bad.push('degenerateBox');
-            else if ((box.max.x-box.min.x) < 1e-4 && (box.max.y-box.min.y) < 1e-4) bad.push('boxCollapsed');
-            const s = av.armature.scale ? av.armature.scale.x : 1;
-            if (!(Math.abs(s) > 1e-4)) bad.push('scaleZero');
-            if (!bad.length) continue;
-            const muteKey = id + '|' + bad.join(',');
-            const tNow = Date.now();
-            if (_wd.mute[muteKey] && tNow - _wd.mute[muteKey] < 2000) continue;
-            _wd.mute[muteKey] = tNow;
-            _wd.events++;
-            console.warn('[watchdog] ' + id + ' not renderable: ' + bad.join(',') +
-              ' | t=' + now.toFixed(2) + ' playStart=' + (state._playStart || 0).toFixed(2) +
-              ' clockBackwards=' + clockBack + ' rebuilt=' + rebuilt +
-              ' vis=' + av.armature.visible + ' cache=' + av._stageVisible +
-              ' pos=' + av.armature.position.toArray().map(n=>+n.toFixed(2)) +
-              ' scale=' + s.toFixed(3) + ' charH=' + (measureAvatarHeight(av)||0).toFixed(3) +
-              ' cam=' + JSON.stringify(camP) + '->' + JSON.stringify(camT));
-          }
-        } catch(e){}
-      }
-      window.__stageWatchdogLog = function(){ return _wd; };
-      // The saved camera is restored on init, before avatars exist, so there is
-      // nothing to project yet and the verdict is unknown. Retry once the cast is
-      // on stage. Without this the bad camera survives until someone drags
-      // something, which is exactly how it got saved in the first place.
-      function ensureStageFramedLater() {
-        let tries = 0;
-        const tick = () => {
-          tries++;
-          if (state.isPlaying) return;              // playback drives the camera now
-          if (Object.keys(state.avatars || {}).length && ensureStageFramed('deferred')) return;
-          if (tries < 60) setTimeout(tick, 250);
-        };
-        setTimeout(tick, 250);
-      }
-      // Lets a check suspend the single-owner rule, so a competing writer can be
-      // shown to actually break the scene. Without this, applyStageVisibility()
-      // running every frame silently repairs whatever anyone else does.
-      window.__suspendStageVisibility = function(on){
-        state._suspendVisibility = !!on;
-      };
+      if(state.prePlayEditing) return true;
+      const walkins = state.diarization?.walkins || [];
+      const order = state.diarization?.entranceOrder || [];
+      const isFirst = order.length ? order[0]===sid : false;
+      if(isFirst) return true;
+      const wk = walkins.find(w=> w.speaker===sid);
+      const seg0 = state.diarization?.segments?.find(s=> s.speaker===sid);
+      const first = wk ? wk.t1 : (seg0 ? seg0.start : 0);
+      const t0 = wk ? wk.t0 : first;
+      return t >= t0 - 1e-6;
+    }
     function presentAvatars(t) {
       const ids = Object.keys(state.avatars);
       const wk = state.diarization?.walkins || [];
@@ -1348,155 +922,38 @@
       if(t===undefined) t = state.diarization ? Math.min(...Object.values(state.diarization.speakers).map((_,i)=>0)) : 0;
       return ids.filter(id=> isPresent(id, t));
     }
-    // -------------------------------------------------------------- avatar size
-    // Measured from the loaded mesh, not assumed. The camera distances were
-    // hardcoded (0.7*scale + 0.50 in front of the head), which happened to fit a
-    // character at one particular scale and cropped every other one -- the body
-    // disappearing below the shoulders was the framing, not a visibility flag.
-    const _heightCache = new WeakMap();
-
-    function measureAvatarHeight(avatar) {
-      if (!avatar || !avatar.armature) return 0;
-      if (_heightCache.has(avatar)) return _heightCache.get(avatar);
-      let h = 0;
-      try {
-        const box = new THREE.Box3().setFromObject(avatar.armature);
-        if (isFinite(box.min.y) && isFinite(box.max.y)) h = Math.max(0, box.max.y - box.min.y);
-      } catch(e){}
-      if (!h) {
-        // Bounds unavailable: fall back to the head height plus a body estimate.
-        try { h = getHeadWorldPos(avatar).y + 0.5; } catch(e){ h = 1.6; }
-      }
-      _heightCache.set(avatar, h);
-      return h;
-    }
-
-    // Shared camera fit. frameAvatars() and headCameraFor() both go through this,
-    // so a group shot and a speaker shot can never disagree about how far back the
-    // camera must be. They did: one computed 1.5 units from a head-spread and the
-    // other a flat 0.78 from the speaker, and the second put the lens inside the
-    // group.
-    //
-    // Two details that matter:
-    //
-    //  * All eight corners are projected with a +dz depth term. The camera sits in
-    //    front of the box, so a corner nearer the viewer than the centre is D-dz
-    //    away and its usable half-width is (D-dz)*halfH -- which means it needs
-    //    |dx|/halfH + dz. Without that term the near row is under-budgeted and
-    //    lands outside the frustum.
-    //  * camPos anchors to box.max.z, not center.z, so the camera is always beyond
-    //    the *nearest* character and can never end up inside the group.
-    //
-    // The minimum distance is derived from the box height rather than being a
-    // constant: at fov 42 a 0.73-tall character needs d >= 0.951, so the old
-    // hardcoded 0.9 floor guaranteed the legs fell out of shot.
-    function fitCameraForBox(box, cam) {
-      const center = box.getCenter(new THREE.Vector3());
-      const size = box.getSize(new THREE.Vector3());
-      const halfV = Math.tan((cam.fov * Math.PI / 180) / 2);
-      const halfH = halfV * (cam.aspect || 1.77);
-      let need = (size.y * 1.12) / (2 * halfV);
-      for (let i = 0; i < 8; i++) {
-        const px = (i & 1) ? box.max.x : box.min.x;
-        const py = (i & 2) ? box.max.y : box.min.y;
-        const pz = (i & 4) ? box.max.z : box.min.z;
-        const dz = pz - center.z;
-        need = Math.max(need, Math.abs(px - center.x) / halfH + dz, Math.abs(py - center.y) / halfV + dz);
-      }
-      const dist = Math.max(0.5, Math.min(need * 1.10, 40));
-      return { box, center, size, dist,
-               camPos: new THREE.Vector3(center.x, center.y + size.y * 0.08, box.max.z + dist) };
-    }
-
-    // Union box over whoever is actually on stage. Characters who have not arrived
-    // yet must not be included: an absent character standing at the door would
-    // otherwise inflate the fit and shrink everyone already present.
-    function stageBoxFor(onStageOnly) {
-      const box = new THREE.Box3();
-      try { if (state.mainHead && state.mainHead.scene) state.mainHead.scene.updateMatrixWorld(true); } catch(e){}
-      for (const [id, a] of Object.entries(state.avatars || {})) {
-        if (!a || !a.armature) continue;
-        if (onStageOnly && (a._stageVisible === false || a.armature.visible === false)) continue;
-        try { box.expandByObject(a.armature); } catch(e){}
-      }
-      return box;
-    }
-
     function frameAvatars(t, dur, opts) {
       let avatars = Object.values(state.avatars);
-      const o = opts||{};
-      // opts.allTime frames the whole cast regardless of playback time. The many
-      // frameAvatars(0, ...) call sites wanted "frame everyone", but 0 is also a
-      // *time*, and at t=0 only the lead character has entered -- so those calls
-      // collapsed spread to the floor and pushed the camera to its 0.9m minimum,
-      // cropping every other character out of shot. Conflating "force" with
-      // "time zero" is why the framing kept collapsing onto whoever was first.
-      const usePresence = state.diarization?.walkins?.length && !o.allTime;
-      if(usePresence) {
+      if(state.diarization?.walkins?.length) {
         const tv = t!==undefined ? t : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
         const presentIds = new Set(presentAvatars(tv));
         const filtered = Object.entries(state.avatars).filter(([id])=> presentIds.has(id)).map(([,av])=>av);
         if(filtered.length) avatars = filtered;
-      } else {
-        // Everything that is actually on stage, not just everyone ever loaded.
-        avatars = Object.entries(state.avatars).filter(([id,av]) =>
-          av._stageVisible !== false && !(av.armature && av.armature.visible === false)).map(([,av])=>av);
-        if(!avatars.length) avatars = Object.values(state.avatars);
       }
       if(!avatars.length || !state.mainHead) return;
-      // Frame the union of everybody in shot, and size the camera to that box.
-      //
-      // The previous version centred on the mean HEAD position, spread the
-      // distance from the widest pair of heads, and then clamped the result to
-      // `Math.min(1.8, roomW*0.25)` -- and since roomW defaulted to 10 that clamp
-      // was effectively a hard 1.8-unit ceiling. Any group spread wider than
-      // about 1.8 units therefore could not fit no matter what the spread said:
-      // the distance was demanded, then silently thrown away. A four-character
-      // scene on a 2.87 spread needed ~2.6 and got 1.8, which put the outer two
-      // outside the frustum and sliced the near two at the knees. That was the
-      // whole "characters vanish" report: not visibility, and not even the saved
-      // camera -- frameAvatars() itself could not frame a wide stage.
-      const box = new THREE.Box3();
-      try { if (state.mainHead && state.mainHead.scene) state.mainHead.scene.updateMatrixWorld(true); } catch(e){}
-      avatars.forEach(a => { try { box.expandByObject(a.armature); } catch(e){} });
-      if (box.isEmpty() || !isFinite(box.min.x)) return;
-      const fit = fitCameraForBox(box, state.mainHead.camera);
-      const center = fit.center, size = fit.size, dist = fit.dist, need = dist / 1.10;
+      const headsF=avatars.map(a=> getHeadWorldPos(a));
+      const center = new THREE.Vector3(0,0,0);
+      headsF.forEach(h=> center.add(h));
+      center.divideScalar(headsF.length);
+      center.y += 0.45;
+      let spread = 0.6;
+      for(let i=0;i<headsF.length;i++) for(let j=i+1;j<headsF.length;j++) {
+        const dx = headsF[i].x - headsF[j].x;
+        const dz = headsF[i].z - headsF[j].z;
+        spread = Math.max(spread, Math.hypot(dx,dz));
+      }
+      spread *= 1.4;
+      const hHalf = Math.atan(Math.tan((state.mainHead.camera.fov * Math.PI / 180)/2)* (state.mainHead.camera.aspect||1.77));
+      const roomW=state.lastBox ? (state.lastBox.max.x-state.lastBox.min.x) : 10;
+      const maxDist=Math.min(1.8, roomW*0.25);
+      const dist = Math.max(0.9, Math.min((spread/2+0.15)/Math.tan(hHalf), maxDist));
       try {
-        const camPos = fit.camPos;
-        const durUse = dur !== undefined ? dur : 550;
-        // A direct framing call must also cancel any tween still in flight.
-        //
-        // The generation guard lives inside moveCameraTo, so a tween started
-        // earlier kept lerping the camera straight back over this one -- and with
-        // speaker changes scheduled at 2800ms, longer than most segments, that
-        // meant the camera spent most of playback being dragged to a stale shot
-        // while frameAvatars believed it had framed the stage. That is "camera is
-        // still, characters are gone": the camera was not still, it was being
-        // overwritten by a shot nobody asked for.
-        if(durUse===0) {
-          state.camTweenGen = (state.camTweenGen || 0) + 1;
-          state.camTween = null;
-          // Smooth mode keeps its own goal, which would otherwise keep easing the
-          // camera back toward the old framing.
-          if (state.isSmooth) {
-            if (!state.camGoal) state.camGoal = { pos: new THREE.Vector3(), look: new THREE.Vector3() };
-            state.camGoal.pos.copy(camPos);
-            state.camGoal.look.copy(center);
-            camSpring.look.copy(center);
-            camSpring.init = true;
-          }
-          state.mainHead.camera.position.copy(camPos);
-          state.mainHead.camera.lookAt(center);
-          state.mainHead.camera.updateMatrixWorld(true);
-          if(state.mainHead.controls){
-            state.mainHead.controls.target.copy(center);
-            state.mainHead.controls.enabled = !state.isPlaying;
-            state.mainHead.controls.update();
-          }
-        }
+        const camPos=new THREE.Vector3(center.x, center.y + 0.9, center.z + dist);
+        const durUse = dur!==undefined ? dur : 550;
+        const o = opts||{};
+        if(durUse===0) { state.mainHead.camera.position.copy(camPos); state.mainHead.camera.lookAt(center); if(state.mainHead.controls){ state.mainHead.controls.target.copy(center); state.mainHead.controls.update(); } }
         else moveCameraTo(camPos, center, durUse, o);
-        if(!state._lastLog || Date.now()-state._lastLog>2000) { state._lastLog=Date.now(); console.log(`[cam] frameAvatars box ${size.x.toFixed(2)}x${size.y.toFixed(2)}x${size.z.toFixed(2)} dist ${dist.toFixed(2)} need ${need.toFixed(2)} cast ${avatars.length}/${Object.keys(state.avatars).length} dur ${durUse}`); }
+        if(!state._lastLog || Date.now()-state._lastLog>2000) { state._lastLog=Date.now(); console.log(`[cam] frameAvatars center ${center.x.toFixed(2)},${center.z.toFixed(2)} dist ${dist.toFixed(2)} spread ${spread.toFixed(2)} present ${avatars.length}/${Object.keys(state.avatars).length} dur ${durUse}`); }
       } catch(e) { console.warn('frameAvatars failed', e); }
     }
      function getHeadWorldPos(avatar) {
@@ -1516,248 +973,14 @@
         return pos;
       } catch(e) { return new THREE.Vector3(0,1.6,0); }
     }
-    // ------------------------------------------------------------------ gaze
-    // Rule: everyone who is not speaking looks at whoever is.
-    //
-    // Why this needed fixing rather than enabling. Two things were already
-    // "in place" and neither worked:
-    //
-    //   1. The player assigned `speakTo = <speaker>.armature`. The engine's
-    //      lookAtCamera wants a *TalkingHead* -- it reads speakTo.objectLeftEye
-    //      to target the eye midpoint. An armature has no such property, so it
-    //      fell through to `speakTo.getWorldPosition()`, and the armature origin
-    //      is at the FEET. Listeners were aiming at the floor.
-    //   2. lookAtCamera() is only ever called while speaking, from init, or from
-    //      a gesture. A listener is not speaking, so its gaze froze at whatever
-    //      the 750ms "lookat" animation captured the first time round.
-    //
-    // Known limit, not a bug: the engine clamps head yaw to +/-0.8 rad (~46
-    // degrees). On a straight four-abreast line the far-end listener may need a
-    // 135-180 degree turn, which no amount of look-at can reach. The body turn
-    // below covers most of that gap; the remainder needs the cast staged in an
-    // arc rather than a line.
-
-    /** World-space point at the speaker's head: the eye midpoint when the
-     *  avatar exposes eye objects, else the head bone, else an estimate.
-     *  Never the armature origin, which is the floor. */
-    function gazeTargetFor(speakerAvatar) {
-      if (!speakerAvatar) return null;
-      try {
-        if (speakerAvatar.objectLeftEye && speakerAvatar.objectRightEye) {
-          const a = new THREE.Vector3().setFromMatrixPosition(speakerAvatar.objectLeftEye.matrixWorld);
-          const b = new THREE.Vector3().setFromMatrixPosition(speakerAvatar.objectRightEye.matrixWorld);
-          return a.add(b).multiplyScalar(0.5);
-        }
-      } catch(e){}
-      try {
-        if (speakerAvatar.objectHead && speakerAvatar.objectHead.isObject3D) {
-          return new THREE.Vector3().setFromMatrixPosition(speakerAvatar.objectHead.matrixWorld);
-        }
-      } catch(e){}
-      try { return getHeadWorldPos(speakerAvatar); } catch(e){ return null; }
-    }
-
-    /** Point `listener`'s gaze at `speakerAvatar` (a TalkingHead or an avatar). */
-    function aimAt(listener, speakerAvatar) {
-      if (!listener || !speakerAvatar || listener === speakerAvatar) return false;
-      const p = gazeTargetFor(speakerAvatar);
-      if (!p) return false;
-      listener.speakTo = p;
-      return true;
-    }
-
-    /** Whoever is speaking at time t, or the last known speaker between lines. */
-    function activeSpeakerAt(t) {
-      const segs = state.diarization?.segments || [];
-      const now = t !== undefined ? t
-        : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
-      for (const s of segs) {
-        if (now >= s.start && now <= s.end) return s.speaker;
-      }
-      return state._lastSpeaker || null;
-    }
-
-    /** True while `sid` is mid walk-in, i.e. not yet in the conversation. */
-    function isWalking(sid, t) {
-      const now = t !== undefined ? t
-        : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
-      return (state.diarization?.walkins || [])
-        .some(w => w.speaker === sid && now >= w.t0 && now <= w.t1);
-    }
-
-    /** Rotate `avatar`'s body toward `target`, easing 35% of the way per call.
-     *
-     *  `target` is the other avatar (or an explicit world point). Both the
-     *  listener's head and the target point are derived here rather than assumed
-     *  -- an earlier version referenced `head`/`from` without ever defining them,
-     *  so every call threw a ReferenceError that the surrounding catch swallowed,
-     *  and no body ever turned while the eyes looked correct.
-     *
-     *  Works in the parent's frame: a nested armature's local rotation.y does
-     *  not equal its world yaw, and the camera helpers write local rotation too. */
-    function turnBodyToward(avatar, target) {
-      if (!avatar || !avatar.armature) return false;
-      try {
-        const head = getHeadWorldPos(avatar);
-        const from = (target && typeof target.x === 'number') ? target
-                                                           : getHeadWorldPos(target);
-        if (!from || !head) return false;
-
-        // Yaw of the parent, so local and world rotations can be compared.
-        let parentYaw = 0;
-        try {
-          const parent = avatar.armature.parent;
-          if (parent) {
-            const pd = new THREE.Vector3();
-            parent.getWorldDirection(pd);
-            parentYaw = Math.atan2(pd.x, pd.z);
-          }
-        } catch(e){}
-
-        const wrap = (v) => {
-          let x = v;
-          while (x > Math.PI) x -= Math.PI * 2;
-          while (x < -Math.PI) x += Math.PI * 2;
-          return x;
-        };
-
-        const worldWant = Math.atan2(from.x - head.x, from.z - head.z);
-        const dir = new THREE.Vector3();
-        avatar.armature.getWorldDirection(dir);
-        const worldCur = Math.atan2(dir.x, dir.z);
-
-        const yawWant = wrap(worldWant - parentYaw);
-        const yawCur = wrap(worldCur - parentYaw);
-        const diff = wrap(yawWant - yawCur);
-        if (Math.abs(diff) < 0.005) return false;   // already there
-
-        // Partial step: this runs every frame, so a full snap would look robotic.
-        avatar.armature.rotation.y = yawCur + diff * 0.35;
-        return true;
-      } catch(e) {
-        return false;
+    function applyPresentVisibility(t) {
+      const walkins = state.diarization?.walkins || [];
+      if(!walkins.length) return;
+      for(const [id, av] of Object.entries(state.avatars)) {
+        const show = isPresent(id, t);
+        try { av.armature.visible = show; av.armature.traverse(o=>{ if(o.isMesh) o.visible = show; }); } catch(e){}
       }
     }
-
-    // Each lookAtCamera() pushes a fresh "lookat" animation into the engine's
-    // queue, so the eyes/head pass is throttled. The body pass is a plain
-    // rotation write with no queue cost and runs per frame, because the camera
-    // helpers (headCameraFor, placeDialogueCam, faceEachOther) also write
-    // armature.rotation.y and would otherwise undo it between throttled ticks.
-    const GAZE_INTERVAL_MS = 250;
-    let _gazeAt = 0;
-    let _bodySpeakerAvatar = null;
-
-    function updateGaze(nowMs) {
-      const speakerId = activeSpeakerAt();
-      if (!speakerId) return;
-      const speakerAvatar = state.avatars[speakerId];
-      if (!speakerAvatar) return;
-      if ((nowMs - _gazeAt) < GAZE_INTERVAL_MS) return;
-      _gazeAt = nowMs;
-      // One snapshot of playback time for the whole pass: isPresent/isWalking
-      // each recompute it from Date.now() when omitted, so calling them
-      // separately could straddle a frame and disagree.
-      const t = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
-
-      for (const [id, av] of Object.entries(state.avatars)) {
-        // The speaker faces the audience; headCameraFor and faceEachOther own
-        // that, deliberately presenting the face to camera. Do not fight them.
-        if (id === speakerId) continue;
-        // Not on stage yet, or still walking in: not in the conversation.
-        if (!isPresent(id, t)) continue;
-        if (isWalking(id, t)) continue;
-        aimAt(av, speakerAvatar);
-        // Placeholder avatars are stubs with no engine; body turn still applies.
-        try { if (typeof av.lookAtCamera === 'function') av.lookAtCamera(500); } catch(e){}
-      }
-      _bodySpeakerAvatar = speakerAvatar;
-    }
-
-    /** Per-frame body turn for listeners; runs after the camera helpers. */
-    function updateGazeBodies() {
-      const speakerAvatar = _bodySpeakerAvatar;
-      if (!speakerAvatar) return;
-      const t = state._playStart ? (Date.now()/1000 - state._playStart) : 0;
-      for (const [id, av] of Object.entries(state.avatars)) {
-        if (av === speakerAvatar) continue;
-        if (!isPresent(id, t) || isWalking(id, t)) continue;
-        turnBodyToward(av, speakerAvatar);
-      }
-    }
-
-    // ------------------------------------------------------- stage visibility
-    // ONE owner. Four places used to write armature.visible directly:
-    //
-    //   * applyPresentVisibility()  -- drove it from isPresent()
-    //   * startWalkLerp()           -- forced visible = true unconditionally
-    //   * loadAvatars()             -- forced visible = true on load
-    //   * the walk-in timers        -- called applyPresentVisibility at t0 AND t1
-    //
-    // They disagreed, and the disagreement was visible: a walking character was
-    // shown by startWalkLerp, then hidden by the next applyPresentVisibility, then
-    // shown again -- appear/disappear/disappear. The player's own log showed it as
-    // "present 4/4" then "present 2/4" mid-scene, and the camera reframed each time.
-    //
-    // The rule, in priority order:
-    //   1. walking            -> always visible, or you cannot see them arrive
-    //   2. not yet entered    -> hidden
-    //   3. otherwise          -> visible
-    // Nothing else is permitted to touch visibility.
-
-    function shouldBeVisible(id, t) {
-      // Mid walk-in: visible regardless of presence, so the entrance is watchable.
-      if (isWalking(id, t)) return true;
-      return isPresent(id, t);
-    }
-
-    function applyStageVisibility(t) {
-      if (state._suspendVisibility) return;
-      const now = t !== undefined ? t
-        : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
-      for (const [id, av] of Object.entries(state.avatars)) {
-        const show = shouldBeVisible(id, now);
-        // No early exit. `_stageVisible` records what this function last WROTE, not
-        // what `armature.visible` currently IS, so skipping the write whenever the
-        // boolean happens to match means this can never repair a mesh that
-        // something else hid. Anything that touches visibility independently --
-        // avatar loading, an entrance, the engine -- leaves a character
-        // permanently invisible while applyStageVisibility reports it present,
-        // and the audio plays regardless because speakAudio never checks render
-        // state. That is "I can hear them but I cannot see them", and it is why
-        // the presence logic could be provably correct (isPresent() true at 9s)
-        // while the character stayed hidden. Writing unconditionally costs one
-        // boolean and a short traverse per avatar per frame, and closes the class
-        // of bug rather than one instance of it.
-        av._stageVisible = show;
-        try {
-          av.armature.visible = show;
-          av.armature.traverse(o => { if (o.isMesh) o.visible = show; });
-        } catch(e){}
-      }
-    }
-
-    // Should-be-visible versus actually-visible. isPresent() and
-      // armature.visible were able to disagree for a long time with nothing
-      // surfacing it: the schedule said the character was on stage, the render
-      // state said otherwise, and playback carried on regardless. This reports
-      // the disagreement directly instead of inferring it from a screenshot.
-      window.__visibilityTruth = function(t){
-        const now = t !== undefined ? t
-          : (state._playStart ? (Date.now()/1000 - state._playStart) : 0);
-        const out = { t: +now.toFixed(2), rows: {}, mismatches: [] };
-        for (const [id, av] of Object.entries(state.avatars || {})) {
-          if (!av || !av.armature) continue;
-          const want = shouldBeVisible(id, now);
-          const is = av.armature.visible;
-          out.rows[id] = { want, is, cache: av._stageVisible };
-          if (want !== is) out.mismatches.push(id);
-        }
-        return out;
-      };
-      // Kept as a thin alias: many call sites predate applyStageVisibility, and a
-    // rename-without-audit is how writers get lost in the first place.
-    function applyPresentVisibility(t) { applyStageVisibility(t); }
     function doorForSpeaker(sid) {
       const walkins = state.diarization?.walkins || [];
       const wk = walkins.find(w=> w.speaker===sid);
@@ -1771,22 +994,12 @@
       if(!wf || !state.mainHead) return;
       const av = state.avatars[wf.sid];
       if(!av || !av.armature) return;
-      // Frame the cast, do not chase the walker's neck.
-      //
-      // This used to pin the camera 1.4m directly behind the walker, aimed at
-      // their head, rewriting the transform every frame. Anyone else on stage
-      // was simply outside that frustum -- and because it wrote the camera
-      // directly it also fought every tween, so the 550ms group reframe issued
-      // at the end of the walk was still in flight 0.2s later when the walker's
-      // own solo shot started, and the two overwrote each other. That is the
-      // reported bug exactly: your line "Well, I'm not sure" is SPEAKER_01 at
-      // 8.64s, her walk ends at 8.44s, and in that window the girl who is
-      // standing 1.8m away was off-screen while the audio kept playing.
-      //
-      // Framing the whole on-stage cast instead keeps the arriving character in
-      // shot *and* keeps everyone already present on screen, and because
-      // frameAvatars routes through moveCameraTo it no longer fights tweens.
-      try { frameAvatars(0, 0, { force: true, allTime: true }); } catch(e){}
+      const head = getHeadWorldPos(av);
+      // Follow walker: camera trails 1.2m behind + 0.6m up, look at head
+      const yaw = av.armature.rotation.y;
+      const behind = new THREE.Vector3(-Math.sin(yaw)*1.4, 0.5, -Math.cos(yaw)*1.4);
+      // Set spring GOALS only — the spring glides the camera (no per-frame snapping)
+      moveCameraTo(head.clone().add(behind), head, 1);
       // Check end
       if(performance.now() - wf.tStart >= wf.dur) {
         state._walkFollow = null;
@@ -1826,14 +1039,13 @@
       })();
       // Position lerp 3m south→slot, axis auto = vector door->slot
       av.armature.position.copy(start);
-      // Visibility belongs to applyStageVisibility() alone. It used to be forced
-      // to true here, which fought the presence pass and made characters blink
-      // out mid-walk. Record the intent and let the single owner act.
-      av._stageVisible = null;
+      av.armature.visible = true;
+      try { av.armature.traverse(o=>{ if(o.isMesh) o.visible=true; }); } catch(e){}
       const yaw = Math.atan2(end.x - start.x, end.z - start.z);
       av.armature.rotation.y = yaw;
       // Follow walker camera
       state._walkFollow = {sid, tStart: performance.now(), dur, t1, partner: dialoguePartner(sid, t0)};
+      state._activeSpeaker = sid;
       const tStart = performance.now();
       const gg2=window.getGroundY||getGroundY;
       const sink2=parseFloat(document.getElementById('feetSink')?.value||0.05);
@@ -1929,17 +1141,7 @@
         let score=0;
         for(const m of members) {
           let look = new THREE.Vector3(0,0,1);
-          // speakTo is now always a world-space point, but it used to change type
-          // mid-session -- Vector3 at load, then an armature on the first
-          // segment -- so this branch silently flipped. Accept any point-like
-          // value; otherwise fall back to the avatar's own facing.
-          try {
-            const t = m.speakTo;
-            if (t && (t.isVector3 || (typeof t.x === 'number' && typeof t.z === 'number'))) {
-              look.subVectors(t, getHeadWorldPos(m)).normalize();
-            } else { m.armature.getWorldDirection(look); }
-            look.y=0; look.normalize();
-          } catch(e){ look.set(0,0,1); }
+          try { if(m.speakTo && m.speakTo.isVector3) look.subVectors(m.speakTo, getHeadWorldPos(m)).normalize(); else m.armature.getWorldDirection(look); look.y=0; look.normalize(); } catch(e){ look.set(0,0,1); }
           score += look.dot(cand.clone().negate());
         }
         if(score > bestScore) { bestScore=score; bestSide=cand; }
@@ -1962,95 +1164,15 @@
       const s = av.armature.scale ? av.armature.scale.x : 1;
       console.log(`[cam] headCameraFor ${speakerId} head ${headPos.x.toFixed(2)},${headPos.y.toFixed(2)},${headPos.z.toFixed(2)} s${s.toFixed(2)} camMode ${state.cameraMode}`);
       const target = new THREE.Vector3(headPos.x, headPos.y + 0.06, headPos.z);
-      // Distance from the speaker's measured height, not a fixed offset. The old
-      // 0.7*scale + 0.50 put the camera 0.79m from the head at scale 0.40, which
-      // shows ~0.61m of a ~0.64m character -- head and shoulders, body cropped.
-      // That is what "the body disappears" was: the framing, not a visibility
-      // flag. aimFull controls how much of the character fills the frame.
+      // Solo cam orbits from the camera's CURRENT azimuth around the head (continuity, no world-+Z jumps)
       const cam = state.mainHead.camera;
-      const vHalf = Math.tan((cam.fov * Math.PI / 180)/2);
-      const charH = measureAvatarHeight(av) || (1.6 * s);
-      const aimFull = 0.72;               // fraction of frame height to fill
-      // visibleHeight = 2*dist*tan(vHalf), and we want charH = aimFull * that,
-      // so dist = charH / (aimFull * 2 * tan(vHalf)). Multiplying instead of
-      // dividing put the camera CLOSER than the old fixed offset (0.71m vs
-      // 0.79m) and cropped more of the body, not less.
-      const fitDist = (charH / aimFull) / (2 * vHalf);
-      // Minimum distance derived from the character, not a constant. At fov 42 a
-      // 0.73-tall character needs d >= 0.951, so the old 0.55*s floor (0.22 at
-      // scale 0.4) framed head-and-shoulders and cut the body out of shot.
-      const minDist = (charH * 1.12) / (2 * vHalf);
-      let soloDist = Math.max(minDist, Math.min(fitDist, 4.0));
-      // Frame the whole on-stage cast, not just the speaker.
-      //
-      // The camera used to sit at headPos.z + 0.78 -- a fixed offset from the
-      // speaker on the +Z side. With SPEAKER_00 at z=-0.60 and SPEAKER_01 at
-      // z=0.00 that puts the lens at z=0.18, so SPEAKER_01 is 0.18 units in front
-      // of it, where the horizontal half-width is only ~0.11 while she stands 0.6
-      // off-axis: roughly five times outside the frustum. Audible, present, and
-      // entirely out of shot. Nobody was hidden -- the camera was inside them.
-      //
-      // Widening to the cast makes that unreachable, and the look-at point is
-      // pulled toward the speaker so whoever is talking still reads as subject.
-      let stageFit = null;
-      try {
-        const box = stageBoxFor(true);
-        if (!box.isEmpty() && isFinite(box.min.x)) stageFit = fitCameraForBox(box, state.mainHead.camera);
-      } catch(e) {}
-      if (stageFit) soloDist = Math.max(soloDist, stageFit.dist);
-      // A solo shot must never push another character who is already on stage out
-      // of frame.
-      //
-      // This was the actual "I can hear her but I cannot see her" bug. The shot
-      // was sized from the speaker alone, so with two characters on stage the
-      // other one fell outside the frustum entirely -- measured at NDC x
-      // -1.57..-1.30, i.e. wholly off-screen -- while the speaker herself was so
-      // small (x -0.06..0.06, six percent of frame width) that the frame read as
-      // empty. Nobody was hidden: the camera was simply pointed at a face from
-      // far enough away to lose everyone else. So the solo distance is now the
-      // larger of "fits the speaker" and "still contains everyone on stage".
-      try {
-        const stageIds = new Set(Object.entries(state.avatars)
-          .filter(([, a]) => a && a.armature && a._stageVisible !== false && a.armature.visible !== false)
-          .map(([id]) => id));
-        stageIds.add(speakerId);
-        const others = Object.entries(state.avatars)
-          .filter(([id, a]) => stageIds.has(id) && a && a.armature && id !== speakerId)
-          .map(([, a]) => a);
-        if (others.length) {
-          const cam0 = state.mainHead.camera;
-          const hV = Math.tan((cam0.fov * Math.PI / 180) / 2);
-          const hH = hV * (cam0.aspect || 1.77);
-          // Required distance so each other character's box stays inside, measured
-          // from the speaker's own position along +Z.
-          let need = soloDist;
-          others.forEach(a => {
-            let b;
-            try { b = new THREE.Box3().setFromObject(a.armature); } catch(e){ return; }
-            if (!isFinite(b.min.x)) return;
-            const corners = [[b.min.x,b.min.y],[b.max.x,b.min.y],[b.min.x,b.max.y],[b.max.x,b.max.y]];
-            const midY = (b.min.y + b.max.y) / 2;
-            corners.forEach(([px, py]) => {
-              const dz = b.max.z - headPos.z;
-              need = Math.max(need, Math.abs(px - headPos.x) / hH + dz, Math.abs(py - midY) / hV + dz);
-            });
-          });
-          soloDist = Math.min(Math.max(soloDist, need * 1.06), 40);
-        }
-      } catch(e) {}
-      // Look at the middle of the character, not the top of its head, so a full
-      // body actually sits in the middle of frame.
-      const bodyMidY = headPos.y - (charH * 0.30);
-      const lookTarget = stageFit
-        ? stageFit.center.clone().lerp(new THREE.Vector3(headPos.x, bodyMidY, headPos.z), 0.35)
-        : new THREE.Vector3(headPos.x, bodyMidY, headPos.z);
-      const camPos = new THREE.Vector3(headPos.x, bodyMidY + (0.12*s), headPos.z + soloDist);
+      let az = 0;
+      const hdx = cam.position.x - headPos.x, hdz = cam.position.z - headPos.z;
+      if (Math.hypot(hdx, hdz) > 0.2) az = Math.atan2(hdx, hdz);
+      const radius = 0.7*s + 0.50;
+      const camPos = new THREE.Vector3(headPos.x + Math.sin(az)*radius, headPos.y + 0.12, headPos.z + Math.cos(az)*radius);
       camPos.x += 0.12*s;
-      // Anchor the depth to the whole cast, so the lens always sits beyond the
-      // nearest character rather than a fixed offset in front of the speaker.
-      if (stageFit) camPos.z = stageFit.box.max.z + soloDist;
-      camPos.x += 0.12*s;
-      console.log(`[cam] target ${lookTarget.x.toFixed(2)},${lookTarget.y.toFixed(2)},${lookTarget.z.toFixed(2)} camPos ${camPos.x.toFixed(2)},${camPos.y.toFixed(2)},${camPos.z.toFixed(2)} soloDist ${soloDist.toFixed(2)} charH ${charH.toFixed(2)} dur ${dur||450}`);
+      console.log(`[cam] target ${target.x.toFixed(2)},${target.y.toFixed(2)},${target.z.toFixed(2)} camPos ${camPos.x.toFixed(2)},${camPos.y.toFixed(2)},${camPos.z.toFixed(2)} dur ${dur||450}`);
       try {
         // solo should still slightly face partner, not just camera - more natural
         const partnerId = dialoguePartner(speakerId, state._playStart ? (Date.now()/1000 - state._playStart) : 0);
@@ -2069,19 +1191,10 @@
         }
         av.armature.rotation.y = yawCam;
       } catch(e) {}
-      moveCameraTo(camPos, lookTarget, dur || 450);
+      moveCameraTo(camPos, target, dur || 450);
     }
-     async function loadAvatars(speakers) {
-      statusEl.textContent = 'Loading avatars ' + Object.entries(speakers).map(([k,v])=>k+':'+(v.avatarUrl||'').split('/').pop()).join(', ') + '...';
-      console.log('[avatars] loadAvatars for', Object.entries(speakers).map(([k,v])=>k+'='+v.avatarUrl+'/'+v.body+'/'+v.name).join(' | '));
-      // Clear old avatars from scene before reloading (so woman/woman1 doesn't keep old man)
-      try {
-        for(const [oid, oldHead] of Object.entries(state.avatars)){
-          if(oldHead && oldHead.armature && oldHead.armature.parent) try{ oldHead.armature.parent.remove(oldHead.armature); }catch(e){}
-          try{ if(oldHead && oldHead.dispose) oldHead.dispose(); }catch(e){}
-        }
-      } catch(e){}
-      state.avatars={};
+    async function loadAvatars(speakers) {
+      statusEl.textContent = 'Loading avatars...';
       // Try real RPM GLBs with blendshapes (now fixed: AvatarRoot -> Armature), fallback to placeholder if offline or still fails
       for (const [id, cfg] of Object.entries(speakers)) {
         let head = null;
@@ -2141,11 +1254,10 @@
             // These entries must have the same shape as the ones the engine builds
             // in showAvatar() (talkinghead.mjs:1283). The engine guards them with
             // `!== null`, so a *missing* field is undefined, passes the guard, and
-            // then gets called: `o.onchange(newvalue)` and `newvalue = o.limit(o.value)`
-            // both threw TypeError on every frame, once per aliased viseme per
-            // avatar. That is why lip-sync reported "viseme still 0 (peak 0.00)"
-            // and fell back to a jaw flap -- and why the exception was invisible,
-            // because the caller swallowed it.
+            // then gets called: `o.onchange(newvalue)` and
+            // `newvalue = o.limit(o.value)` both threw TypeError, once per aliased
+            // viseme per avatar, on every frame. That is why lip-sync reported
+            // "viseme still 0 (peak 0.00)" and fell back to a jaw flap.
             //
             // `limit` must be null or a function; it was the number 1.
             try {
@@ -2195,10 +1307,7 @@
           tryHead.armature.rotation.y = cfg.rotation || 0;
           tryHead._slotPos = new THREE.Vector3(pos.x, gy+sink, pos.z);
           tryHead._slotRot = cfg.rotation || 0;
-          // Left to applyStageVisibility(): a freshly loaded avatar is not
-          // automatically on stage. _stageVisible = null forces the first pass
-          // to actually write, whichever way the rule resolves.
-          tryHead._stageVisible = null;
+          tryHead.armature.visible = true;
           try { const s=parseFloat(document.getElementById('charSize')?.value||0.5); tryHead.armature.scale.setScalar(s); } catch(e){}
           state.mainHead.scene.add(tryHead.armature);
           tryHead.speakTo = new THREE.Vector3(0, 1.6, 2);
@@ -2274,10 +1383,9 @@
         [...container.children].forEach((c,i)=>{ if(c!==canvas) c.remove(); });
       } catch(e) {}
       // Apply staged visibility at t=0 (first solo) + setup drag live spots
-      try { applyStageVisibility(0); frameAvatars(0,0,{force:true,allTime:true}); if(state._setupDrag) state._setupDrag(); } catch(e) {}
-      const onStage = Object.values(state.avatars).filter(a => a._stageVisible).length;
+      try { applyPresentVisibility(0); frameAvatars(0,0,{force:true}); if(state._setupDrag) state._setupDrag(); } catch(e) {}
       const realCount = Object.values(state.avatars).filter(a=> a.speakAudio && a.armature && a.armature.type!=='Group' || a.armature.children.some(ch=> ch.geometry && ch.geometry.morphAttributes)).length;
-      statusEl.textContent = `${Object.keys(state.avatars).length} avatars ready, ${onStage} on stage (${Object.values(state.avatars).filter(a=> a.constructor.name==='TalkingHead').length} real, placeholders for offline).`;
+      statusEl.textContent = `${Object.keys(state.avatars).length} avatars ready (${Object.values(state.avatars).filter(a=> a.constructor.name==='TalkingHead').length} real, placeholders for offline).`;
     }
     let audioCtx = null;
     function getAudioCtx() {
@@ -2288,26 +1396,18 @@
       }
       return audioCtx;
     }
-    // These replaced the two file pickers, which are gone. Both remain real
-    // functions: the job loader fetches audio and dialogue through this same
-    // path, so a job is prepared exactly as a manual pick used to prepare one.
-    async function loadAudioSource(src) {
-      const res = await fetch(src, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`audio ${res.status}`);
+    async function loadAudioFile(file) {
+      const arrayBuffer = await file.arrayBuffer();
       const ctx = getAudioCtx();
-      state.audioBuffer = await ctx.decodeAudioData(await res.arrayBuffer());
+      state.audioBuffer = await ctx.decodeAudioData(arrayBuffer);
       statusEl.textContent = `Audio loaded: ${state.audioBuffer.duration.toFixed(1)}s`;
       checkReady();
     }
-    async function loadDiarizationSource(src) {
-      const res = await fetch(src, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`dialogue ${res.status}`);
-      state.diarization = await res.json();
-      const n = state.diarization.segments ? state.diarization.segments.length : 0;
-      statusEl.textContent = `Dialogue loaded: ${n} lines`;
-      if (Object.keys(state.avatars).length === 0 && state.diarization.speakers) {
-        await loadAvatars(state.diarization.speakers);
-      }
+    async function loadDiarizationFile(file) {
+      const text = await file.text();
+      state.diarization = JSON.parse(text);
+      statusEl.textContent = `Diarization loaded: ${state.diarization.segments.length} segments`;
+      if (Object.keys(state.avatars).length === 0 && state.diarization.speakers) { await loadAvatars(state.diarization.speakers); }
       checkReady();
     }
     async function ensureAudioDecoded(){
@@ -2320,37 +1420,14 @@
         return true;
       }
     function checkReady() {
-      // Name the job being played. It replaced the two file pickers, so without
-      // this there was no indication of where the audio and dialogue came from.
-      try {
-        const src = document.getElementById('jobSource');
-        if (src) {
-          const explicit = new URLSearchParams(location.search).get('job');
-          const id = explicit || localStorage.getItem('wav_job_id') || 'default';
-          const n = state.diarization ? Object.keys(state.diarization.speakers || {}).length : 0;
-          src.innerHTML = explicit
-            ? `Job <b>#${id}</b> &middot; ${n} speaker${n === 1 ? '' : 's'}`
-            : `No job selected &middot; showing the default dialogue &middot; <a href="config.html" style="color:#7dd3fc">open Dialogue Config</a>`;
-        }
-      } catch(e){}
       const ready = (state.audioBuffer || state._pendingAudioArrayBuffer) && state.diarization && validateSpots();
-      if (state._noAudio && !state.audioBuffer && !state._pendingAudioArrayBuffer) {
-        // Avatars can be ready while the audio is missing; say which is missing
-        // rather than reporting success for a Play button that does nothing.
-        statusEl.textContent = 'No audio for this dialogue — open Dialogue Config to create or pick a job';
-        playBtn.disabled = true;
-        recordBtn.disabled = true;
-        return;
-      }
       const canPlay = ready && !state.prePlayEditing ? false : ready;
       playBtn.disabled = !ready;
       recordBtn.disabled = !ready;
-      // These used to point at controls the panel no longer has: a "Confirm Spots"
-      // button and BG Size/Background sliders. Naming a control the user cannot
-      // find is worse than saying nothing.
-      if(state.prePlayEditing && Object.keys(state.avatars).length) statusEl.textContent='Drag an avatar to reposition it, then Play';
-      else if(state.prePlayEditing) statusEl.textContent='Loading avatars...';
-      else if(!validateSpots()) statusEl.textContent='Warning: an avatar is inside furniture — move it clear';
+      // Keep prePlayEditing true so frameAvatars shows 4/4 until Play
+      if(state.prePlayEditing && Object.keys(state.avatars).length) statusEl.textContent='Drag avatars (red=furniture), BG Size/Background, then Play';
+      else if(state.prePlayEditing) statusEl.textContent='Click Confirm Spots to load avatars';
+      else if(!validateSpots()) statusEl.textContent='⚠️ Move avatar away from furniture/wall then Confirm';
       
       if (ready) {
         const dur = state.audioBuffer.duration.toFixed(1);
@@ -2394,7 +1471,7 @@
     async function playIntro() {
       if(!state.diarization || !state.diarization.speakers) return;
       // Staged: wide on present at t=0 only (first solo)
-      frameAvatars(0,0,{force:true,allTime:true});
+      frameAvatars(0,0,{force:true});
       await new Promise(r=> setTimeout(r, INTRO_WIDE_MS));
       if(!state.isPlaying) return;
       const presentAt0 = presentAvatars(0);
@@ -2421,9 +1498,11 @@
       try { if(state.mainHead && state.mainHead.audioCtx) await state.mainHead.audioCtx.resume(); } catch(e){}
       for(const av of Object.values(state.avatars)) { try{ if(av.audioCtx) await av.audioCtx.resume(); }catch(e){} }
       state.isPlaying = true; playBtn.disabled = true; stopBtn.disabled = false; downloadBtn.disabled = true;
+      state._activeSpeaker = null; state._lastCamMove = 0; state._lastCamSpeaker = null;
+      try { if(state.mainHead.controls) state.mainHead.controls.enabled = false; } catch(e){} // spring is the only camera writer during play
       Object.values(state.avatars).forEach(av => { try { av.stop(); av.start(); } catch(e) {} });
       // Staged entrance: first speaker solo at t=0
-      applyPresentVisibility(0); frameAvatars(0,0,{force:true,allTime:true});
+      applyPresentVisibility(0); frameAvatars(0,0,{force:true});
       statusEl.textContent = 'Introducing cast...';
       await playIntro();
       if(!state.isPlaying) return; // Stop was clicked during the intro
@@ -2434,10 +1513,8 @@
         const t0ms = w.t0*1000, t1ms = w.t1*1000;
         state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; startWalkLerp(w.speaker, w.t0, w.t1); }, t0ms));
         state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; frameAvatars(w.t1+0.15); }, t1ms+150));
-        // The second applyPresentVisibility(w.t1) is gone. Two calls per walk,
-        // from two writers, is what made characters blink out during their own
-        // entrance. applyStageVisibility() now runs once per frame in the render
-        // loop, which is the correct place for a rule this simple.
+        state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; applyPresentVisibility(w.t0); }, t0ms));
+        state.scheduledTimeouts.push(setTimeout(()=>{ if(!state.isPlaying) return; applyPresentVisibility(w.t1); }, t1ms));
       }
       statusEl.textContent = 'Playing dialogue...';
       const { segments } = state.diarization;
@@ -2460,66 +1537,36 @@
           if (!state.isPlaying) return;
           speakerLabel.textContent = speakerName; speakerLabel.classList.add('active');
           subtitleBox.textContent = seg.text; subtitleBox.classList.add('active');
-          // Everyone who is not speaking looks at whoever is. Aim at the speaker's
-          // HEAD -- this used to assign `avatar.armature`, whose origin is the
-          // floor, so the engine's lookAtCamera resolved the target to the
-          // speaker's feet. The speaker keeps facing the camera.
-          state._lastSpeaker = seg.speaker;
-          Object.entries(state.avatars).forEach(([id, av]) => {
-            if (id === seg.speaker) { av.speakTo = null; return; }
-            if (!isPresent(id, seg.start) || isWalking(id, seg.start)) return;
-            aimAt(av, avatar);
-          });
+          Object.entries(state.avatars).forEach(([id, av]) => { if (id === seg.speaker) av.speakTo = null; else av.speakTo = avatar.armature; });
           const walkActiveAt = (state.diarization?.walkins||[]).find(w=> seg.start >= w.t0 && seg.start < w.t1);
-      // walk has absolute priority - don't do segment camera during walk, let walker be visible
-      if (walkActiveAt) {
-        try {
-          // during walk, camera follows walker via updateWalkCamera spring, not segment framing
-          // just ensure walker is visible, don't move to talker's solo/2-shot
-          if (state.avatars[walkActiveAt.speaker]) {
-            // keep walker's camera as is, don't override with talker's camera
-          }
-        } catch(e){}
-      }
       try {
           if(walkActiveAt) {
-            // hold camera on walker - don't do frameAvatars wide, let walk follow handle it
-            // keep current camera, just ensure visibility
-            applyPresentVisibility(seg.start);
+            frameAvatars(seg.start, seg._camDur);
           } else if(state.cameraMode==='wide') {
             frameAvatars(seg.start, seg._camDur);
           } else if(state.cameraMode==='solo') {
             headCameraFor(seg.speaker, 900);
           } else {
-            // hybrid: solo + 2-shot - very slow, stable, with cooldown
+            // hybrid: cut ONLY on speaker change (min hold 1.5s), no dice rolls.
+            // Between cuts the spring keeps the look glued to the active speaker's head.
             const idx = segments.indexOf(seg);
-            const prevSpk = idx>0 ? segments[idx-1].speaker : null;
             const partner = dialoguePartner(seg.speaker, seg.start);
             const partnerPresent = partner && state.avatars[partner] && isPresent(partner, seg.start);
-            const isMonologue = prevSpk && prevSpk===seg.speaker;
             const nextSeg = segments[idx+1];
             const gapToNext = nextSeg ? (nextSeg.start - seg.end) : 10;
             const nowMs = seg.start*1000;
             const lastMove = state._lastCamMove || 0;
             const lastSpeaker = state._lastCamSpeaker || null;
-            // very long cooldown for stability - don't move more than every 3.5s, very slow
-            const cooldown = (nowMs - lastMove) < 3500;
-            // solo 85% for 2-speaker: only 1 in 7 is 2-shot, so mostly solo
-            const shouldSolo = isMonologue || !partnerPresent || gapToNext > 2.5 || cooldown || (idx % 7 !== 1);
-            const sameAsLastCam = lastSpeaker === seg.speaker && cooldown;
-            if(sameAsLastCam) {
-              // hold - don't move at all for same speaker
-            } else if(!shouldSolo && partnerPresent) {
-              placeDialogueCam(seg.speaker, seg.start, seg._camDur);
+            const speakerChanged = lastSpeaker !== seg.speaker;
+            const heldLongEnough = (nowMs - lastMove) >= 1500;
+            if(lastSpeaker === null || (speakerChanged && heldLongEnough)) {
+              state._activeSpeaker = seg.speaker;
+              if(!partnerPresent || gapToNext > 2.5) headCameraFor(seg.speaker, 0);
+              else placeDialogueCam(seg.speaker, seg.start, 0);
               state._lastCamMove = nowMs;
               state._lastCamSpeaker = seg.speaker;
-            } else if (!isMonologue || idx===0) {
-              headCameraFor(seg.speaker, seg._camDur);
-              state._lastCamMove = nowMs;
-              state._lastCamSpeaker = seg.speaker;
-            } else {
-              // monologue hold
             }
+            // else: hold current shot — spring keeps tracking the active speaker's head
           }
       } catch(e) { console.warn('camera failed', e); }
           const segmentAudio = extractSegment(state.audioBuffer, seg.start, seg.end);
@@ -2530,7 +1577,7 @@
             if(avatar.setMood) avatar.setMood(mood);
             else if(avatar.avatarMood !== undefined) avatar.avatarMood = mood;
           } catch(e) {}
-          // Full FBX clip for the line (always fbx now the Anim picker is gone)
+          // If animMode is fbx/hybrid, also play FBX clip from seg.clip (full body)
           if((state.animMode==='fbx' || state.animMode==='hybrid' || state.animMode==='mood') && seg.clip) {
             // For mood mode, clip is still available but we only use setMood, not FBX
             // For fbx/hybrid, play the clip
@@ -2601,7 +1648,7 @@
               // Hybrid: viseme primary (TalkingHead smoothed), jaw fallback if viseme stays 0
               const hasFullVisemes = visCount >= 10;
               let useJawFallback = mode === 'jaw' || (mode === 'auto' && !hasFullVisemes);
-              // Watchdog: if viseme expected but not moving after 600ms, fallback to jaw - natural speed
+              // Watchdog: if viseme expected but not moving after 800ms, fallback to jaw - increased threshold to avoid false fallback
               let jawFallbackTimer = null;
               if(!useJawFallback && hasFullVisemes) {
                 const visIdxProbe = dict['viseme_aa'] ?? dict['aa'] ?? dict['jawOpen'];
@@ -2612,49 +1659,31 @@
                 jawFallbackTimer = setTimeout(()=>{
                   clearInterval(iv);
                   if(peak < 0.08) {
-                    console.warn(`[lips] ${seg.speaker} viseme still 0 (peak ${peak.toFixed(2)}), falling back to jaw (natural 2Hz)`);
+                    console.warn(`[lips] ${seg.speaker} viseme still 0 (peak ${peak.toFixed(2)}), falling back to jaw (natural slow)`);
+                    // natural slow jaw: single open per segment, no per-word chatter (too fast)
+                    const segDur = segmentDuration;
                     const jawIdxFb = dict['jawOpen']??dict['mouthOpen']??dict['aa'];
                     if(jawIdxFb===undefined) return;
-                    // natural 2Hz: every other word, moderate open, longer hold
-                    wordData.wtimes.forEach((t, i)=>{
-                      if(i%2!==0) return; // every other word = 2Hz, not every word 3Hz
-                      const w = wordData.words[i];
-                      const dur = Math.max(wordData.wdurations[i] || 400, 350);
-                      let open = 0.45;
-                      if(/^[aeiou]/i.test(w)) open = 0.60;
-                      if(/^[o]/i.test(w)) open = 0.52;
-                      if(/^[bp]/i.test(w)) open = 0.30;
-                      setTimeout(()=>{
-                        if(!state.isPlaying) return;
-                        headMesh.morphTargetInfluences[jawIdxFb]=open;
-                        setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdxFb]=open*0.4; }catch(e){} }, dur*0.5);
-                        setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdxFb]=0; }catch(e){} }, dur*0.90);
-                      }, t);
-                    });
+                    const baseOpen = 0.40;
+                    setTimeout(()=>{ if(!state.isPlaying) return; headMesh.morphTargetInfluences[jawIdxFb]=baseOpen; }, wordData.wtimes[0]||0);
+                    setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdxFb]=baseOpen*0.5; }catch(e){} }, segDur*0.45);
+                    setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdxFb]=0; }catch(e){} }, segDur*0.92);
                   } else {
                     console.log(`[lips] ${seg.speaker} viseme peak ${peak.toFixed(2)} — native viseme working`);
                   }
-                }, 500);
+                }, 800);
               }
               const jawIdx = dict['jawOpen'] ?? dict['mouthOpen'] ?? dict['aa'];
               if(useJawFallback && jawIdx !== undefined) {
-                // Natural jaw: every other word 2Hz moderate
-                wordData.wtimes.forEach((t,i)=>{
-                  if(i%2!==0) return;
-                  const w=wordData.words[i];
-                  const dur=Math.max(wordData.wdurations[i]||380, 300);
-                  let open=0.45;
-                  if(/^[aeiou]/i.test(w)) open=0.58;
-                  if(/^[o]/i.test(w)) open=0.50;
-                  if(/^[bp]/i.test(w)) open=0.30;
-                  setTimeout(()=>{
-                    if(!state.isPlaying) return;
-                    headMesh.morphTargetInfluences[jawIdx]=open;
-                    setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdx]=open*0.4; }catch(e){} }, dur*0.5);
-                    setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdx]=0; }catch(e){} }, dur*0.90);
-                  }, t);
-                });
-                if(seg.start < 2) console.log(`[lips] ${seg.speaker} using JAW natural 2Hz (visemes: ${visCount}) segDur ${segmentDuration}`);
+                // Natural slow jaw: single gentle open for whole segment, no per-word chatter
+                const segDur = segmentDuration;
+                setTimeout(()=>{
+                  if(!state.isPlaying) return;
+                  headMesh.morphTargetInfluences[jawIdx] = 0.38;
+                  setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdx]=0.22; }catch(e){} }, segDur*0.4);
+                  setTimeout(()=>{ try{ headMesh.morphTargetInfluences[jawIdx]=0; }catch(e){} }, segDur*0.88);
+                }, wordData.wtimes[0]||0);
+                if(seg.start < 2) console.log(`[lips] ${seg.speaker} using JAW SLOW single-open (visemes: ${visCount}) segDur ${segDur}`);
                 if(seg.start < 2) console.log(`[lips] ${seg.speaker} using JAW FALLBACK slow (visemes: ${visCount}) segDur ${segDur} words ${wordData.words.length}`);
               } else if(seg.start < 2 && hasFullVisemes) {
                 console.log(`[lips] ${seg.speaker} trusting native viseme animation only (visemes: ${visCount})`);
@@ -2668,26 +1697,8 @@
         }, seg.start * 1000);
         state.scheduledTimeouts.push(timeoutId);
       });
-      // End when the AUDIO ends, not when the last line does. Taking this from
-      // the segments alone meant a dialogue belonging to a longer recording kept
-      // the player running for a minute of silence after the audio was over --
-      // four jobs did exactly that, each with a dialogue 61s longer than its own
-      // audio. Out-of-bounds lines were already skipped; this stops the dead air.
-      const audioEndMs = (state.audioBuffer && state.audioBuffer.duration ? state.audioBuffer.duration : Infinity) * 1000;
-      // The +1s tail is the "hold the last frame a beat, then stop" grace period.
-      // It must NEVER take part in the mismatch test: folding it in made the
-      // check fire on every healthy job whose last line lands within a second of
-      // the audio, and then printed both numbers identical ("runs to 100.7s but
-      // the audio is only 100.7s"). Lines end exactly at the audio all the time.
-      const lastLineEndMs = segments[segments.length - 1].end * 1000;
-      const totalDuration = Math.min(lastLineEndMs + 1000, audioEndMs);
-      // Same 5s tolerance the server uses (DIALOGUE_OVERRUN_TOLERANCE_S) so the
-      // banner and the API can never disagree about the same job.
-      if (lastLineEndMs > audioEndMs + 5000) {
-        console.warn(`[dialogue] lines run to ${(lastLineEndMs/1000).toFixed(1)}s but the audio is only ${(audioEndMs/1000).toFixed(1)}s -- this dialogue may belong to another recording`);
-        showConsistencyWarning(`This dialogue runs to ${(lastLineEndMs/1000).toFixed(1)}s but the audio is only ${(audioEndMs/1000).toFixed(1)}s. The lines after that point were written for a different recording.`);
-      }
-      const endTimeout = setTimeout(() => { state.isPlaying = false; playBtn.disabled = false; stopBtn.disabled = true; statusEl.textContent = 'Dialogue finished.'; }, totalDuration);
+      const totalDuration = segments[segments.length - 1].end * 1000 + 1000;
+      const endTimeout = setTimeout(() => { state.isPlaying = false; state._activeSpeaker = null; playBtn.disabled = false; stopBtn.disabled = true; statusEl.textContent = 'Dialogue finished.'; try { if(state.mainHead.controls) state.mainHead.controls.enabled = true; } catch(e){} }, totalDuration);
       state.scheduledTimeouts.push(endTimeout);
     }
     function stopDialogue() {
@@ -2695,6 +1706,7 @@
       Object.values(state.avatars).forEach(av => { try { av.stop(); av.start(); } catch(e) {} });
       subtitleBox.classList.remove('active'); speakerLabel.classList.remove('active');
       playBtn.disabled = false; stopBtn.disabled = true; recordBtn.disabled = !(state.audioBuffer && state.diarization);
+      state._activeSpeaker = null; state._walkFollow = null; try { if(state.mainHead.controls) state.mainHead.controls.enabled = true; } catch(e){}
       if (state.isRecording) stopRecording();
       statusEl.textContent = 'Stopped.';
     }
@@ -2750,22 +1762,11 @@
         try { clearInterval(state._recordInterval); } catch(e){}
       }
     }
-    // The Audio/Diarization pickers, the Lip-sync select and the Anim select are
-    // gone: both inputs always came from the job on the server, and lip-sync is
-    // always 'auto' and animation always Full FBX.
+    document.getElementById('audioInput').addEventListener('change', (e) => { if (e.target.files[0]) loadAudioFile(e.target.files[0]); });
+    document.getElementById('jsonInput').addEventListener('change', (e) => { if (e.target.files[0]) loadDiarizationFile(e.target.files[0]); });
+    document.getElementById('lipsyncMode').addEventListener('change', (e)=>{ state.lipsyncMode = e.target.value; console.log('lipsyncMode', state.lipsyncMode); });
     document.getElementById('cameraMode').addEventListener('change', (e)=>{ state.cameraMode = e.target.value; console.log('cameraMode', state.cameraMode); if(state.cameraMode==='wide') frameAvatars(); });
-    // smooth toggle (?smooth=1)
-    const smoothToggle=document.getElementById('smoothToggle');
-    if(smoothToggle){
-      smoothToggle.checked = !!state.isSmooth;
-      smoothToggle.addEventListener('change', (e)=>{
-        const on=e.target.checked;
-        const url=new URL(location.href);
-        if(on) url.searchParams.set('smooth','1'); else url.searchParams.delete('smooth');
-        // keep job param
-        location.href=url.toString();
-      });
-    }
+    document.getElementById('animMode').addEventListener('change', (e)=>{ state.animMode = e.target.value; console.log('animMode', state.animMode); });
     playBtn.addEventListener('click', playDialogue);
     stopBtn.addEventListener('click', stopDialogue);
     recordBtn.addEventListener('click', async () => {
